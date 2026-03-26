@@ -24,6 +24,21 @@ Edit `.env`: set `DATABASE_URL` to your Postgres connection string, for example:
 
 `postgresql+psycopg2://USER:PASSWORD@localhost:5432/YOUR_DB_NAME`
 
+### PostgreSQL + pgAdmin (create the empty database)
+
+You are **not** installing a second copy of PostgreSQL. The real database **server** is already running (the one you installed, e.g. **PostgreSQL 18**). pgAdmin is only a **GUI client** that talks to it.
+
+**Usual path (you already see “PostgreSQL 18” under Servers):**
+
+1. Open **pgAdmin** and click **PostgreSQL 18** (enter the `postgres` password if asked).
+2. Expand **Databases** → right-click **Databases** → **Create** → **Database…**.
+3. **Database** name: `minoto_dev` (must match the name at the end of `DATABASE_URL` in `.env`). **Owner**: `postgres` → **Save**.
+4. Done — no need to create tables by hand; Alembic does that after you add models and run migrations.
+
+**Only if you do *not* see any server in the left panel:** then use **Servers** → right-click **Servers** → **Register** → **Server** and enter Host `localhost`, Port `5432`, User `postgres`, and your password. That step only saves a **connection** in pgAdmin; it does not replace or duplicate PostgreSQL itself.
+
+If your `.env` uses another database name, use that name in step 3 instead of `minoto_dev`.
+
 ## Run the server
 
 With the venv active:
@@ -63,23 +78,29 @@ There is no `app/` package — the entry file is **`main.py`**.
 
 ## GitHub (backend only)
 
-### 1. Create the repository
+**Remote:** [github.com/sheharyar-mansha/minoto_backend](https://github.com/sheharyar-mansha/minoto_backend)  
+Default branch: **`mom-be`**.
 
-On GitHub: **New repository** → name it (e.g. `mom-be` or `minoto-api`) → **empty** repo (no README, no .gitignore from GitHub if you already have them here).
-
-### 2. Push this folder using branch `mom-be`
-
-From **`backend/`** (first time):
+### 1. Clone (teammates / new machine)
 
 ```powershell
-git add .
-git commit -m "Initial API"
+git clone -b mom-be https://github.com/sheharyar-mansha/minoto_backend.git
+cd minoto_backend
+```
+
+### 2. Push from this folder (first time on your PC)
+
+From **`backend/`** (if you have not added `origin` yet):
+
+```powershell
+git remote add origin https://github.com/sheharyar-mansha/minoto_backend.git
 git branch -M mom-be
-git remote add origin https://github.com/YOUR_USER/YOUR_REPO.git
 git push -u origin mom-be
 ```
 
-### 3. Make `mom-be` the default branch
+If `origin` already exists, skip `remote add` and only run `git push -u origin mom-be`.
+
+### 3. Make `mom-be` the default branch on GitHub
 
 On GitHub: **Settings → General → Default branch** → set to **`mom-be`** → Update.
 

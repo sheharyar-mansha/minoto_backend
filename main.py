@@ -2,13 +2,13 @@
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from config.settings import settings
-from routes.health import router as health_router
+from api.v1.router import api_router
+from config.settings import UPLOAD_DIR, settings
 
 app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
 
-# Lets browser-based frontends (e.g. Next.js on localhost) call the API. Mobile apps ignore CORS.
 _origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -18,4 +18,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(health_router, prefix=settings.API_V1_PREFIX)
+# StaticFiles requires the directory to exist at import time (before startup handlers run).
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+app.mount("/media", StaticFiles(directory=str(UPLOAD_DIR)), name="media")
+
+app.include_router(api_router, prefix=settings.API_V1_PREFIX)

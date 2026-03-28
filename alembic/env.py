@@ -6,7 +6,7 @@ from sqlalchemy import engine_from_config, pool
 from config.settings import settings
 from db.base import Base
 
-# When you add tables: import your model modules here (example: from models import user  # noqa: F401)
+import models  # noqa: F401 — register ORM metadata for autogenerate
 
 config = context.config
 

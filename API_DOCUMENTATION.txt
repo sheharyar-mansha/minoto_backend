@@ -136,6 +136,9 @@ GET    /api/v1/meetings
        Response: PaginatedResponse<MeetingListItemOut>
          MeetingListItemOut:
            id, title, date_label, duration_label, meeting_date, duration_minutes, status
+       Visibility:
+         - admin/host users: meetings they own (created)
+         - member users: meetings where their login email matches a participant member email
 
 POST   /api/v1/meetings
        Body JSON:
@@ -153,6 +156,9 @@ GET    /api/v1/meetings/{meeting_id}
          existing_preview_avatar_urls (length min(3, existing_members_count): random existing
            members' avatar_url or null; for UI preview of "existing" card),
          participant_member_ids (ordered roster member UUIDs)
+       Visibility:
+         - owner can always read
+         - member users can read if their login email is in the meeting participant roster
        Counts derive from roster:
          is_new_for_meeting true  -> new_members_count
          is_new_for_meeting false -> existing_members_count

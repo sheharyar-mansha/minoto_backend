@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from api.deps import get_current_user, pagination
@@ -28,6 +28,22 @@ from utils.ids import new_id
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 
+def _is_member_user(user: User) -> bool:
+    return (user.role or "").strip().lower() == "member"
+
+
+def _member_visibility_exists_clause(user: User):
+    email = (user.email or "").strip().lower()
+    return exists(
+        select(MeetingMemberLink.meeting_id)
+        .join(Member, Member.id == MeetingMemberLink.member_id)
+        .where(
+            MeetingMemberLink.meeting_id == Meeting.id,
+            func.lower(Member.email) == email,
+        )
+    )
+
+
 @router.get("", response_model=PaginatedResponse[MeetingListItemOut])
 def list_meetings(
     user: Annotated[User, Depends(get_current_user)],
@@ -39,9 +55,14 @@ def list_meetings(
     if scope not in ("upcoming", "conducted", "all"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid scope")
     skip, limit = page
+    visibility = (
+        _member_visibility_exists_clause(user)
+        if _is_member_user(user)
+        else (Meeting.user_id == user.id)
+    )
     stmt = (
         select(Meeting)
-        .where(Meeting.user_id == user.id)
+        .where(visibility)
         .options(
             selectinload(Meeting.member_links).selectinload(MeetingMemberLink.member),
         )
@@ -89,9 +110,20 @@ def get_meeting(
     db: Annotated[Session, Depends(get_db)],
 ) -> MeetingDetailOut:
     m = load_meeting_with_links(db, meeting_id)
-    if m is None or m.user_id != user.id:
+    if m is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Meeting not found")
-    return meeting_detail(m)
+    if m.user_id == user.id:
+        return meeting_detail(m)
+    if _is_member_user(user):
+        current_email = (user.email or "").strip().lower()
+        assigned = any(
+            ((link.member.email if link.member is not None else "") or "").strip().lower()
+            == current_email
+            for link in m.member_links
+        )
+        if assigned:
+            return meeting_detail(m)
+    raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Meeting not found")
 
 
 @router.patch("/{meeting_id}", response_model=MeetingDetailOut)

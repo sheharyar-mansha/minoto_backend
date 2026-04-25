@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class LiveSessionUpsert(BaseModel):
@@ -8,6 +8,14 @@ class LiveSessionUpsert(BaseModel):
     is_paused: bool
     running_since_ms: int | None = None
     total_target_seconds: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _validate_running_state(self) -> "LiveSessionUpsert":
+        if self.is_paused and self.running_since_ms is not None:
+            raise ValueError("running_since_ms must be null when is_paused is true")
+        if not self.is_paused and self.running_since_ms is None:
+            raise ValueError("running_since_ms is required when is_paused is false")
+        return self
 
 
 class LiveSessionOut(BaseModel):

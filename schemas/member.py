@@ -32,6 +32,7 @@ class MemberOut(BaseModel):
     avatar_url: str | None
     has_voice_sample: bool
     voice_duration_seconds: int | None
+    voice_sample_url: str | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -33,3 +33,10 @@ class Member(Base):
     meeting_links = relationship(
         "MeetingMemberLink", back_populates="member", cascade="all, delete-orphan"
     )
+
+    @property
+    def voice_sample_url(self) -> str | None:
+        """Relative path under /media (same pattern as avatar_url)."""
+        if not self.has_voice_sample or not self.voice_file_path:
+            return None
+        return self.voice_file_path

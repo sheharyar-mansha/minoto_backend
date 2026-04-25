@@ -23,6 +23,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> AuthSucces
         email=email,
         full_name=body.full_name.strip(),
         hashed_password=hash_password(body.password),
+        role="member",
     )
     db.add(user)
     db.commit()

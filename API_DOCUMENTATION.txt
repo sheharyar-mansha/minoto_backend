@@ -175,8 +175,14 @@ PUT    /api/v1/meetings/{meeting_id}/participants
 
 POST   /api/v1/meetings/{meeting_id}/complete
        Sets status=completed, conducted_at=now
+       If an active live session exists for this meeting, server computes final elapsed
+       (including currently running segment), computes overtime, and clears that
+       active session row for this user.
        Response:
-         { "id", "status", "conducted_at" }
+         {
+           "id", "status", "conducted_at",
+           "final_elapsed_seconds"?, "target_seconds"?, "overtime_seconds"?
+         }
 
 --------------------------------------------------------------------------------
 LIVE RECORDING SESSION (mobile timer sync)  (prefix /api/v1/sessions)
@@ -190,6 +196,9 @@ PUT    /api/v1/sessions/active
        Body JSON (replace or create):
          meeting_id, title, elapsed_seconds, is_paused,
          running_since_ms?, total_target_seconds
+       Validation:
+         - is_paused=true  => running_since_ms must be null
+         - is_paused=false => running_since_ms is required
        Response: LiveSessionOut
        Errors: 404 if meeting_id not found / not owned
 

@@ -1,13 +1,14 @@
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from api.deps import get_current_user, pagination
 from db.session import get_db
 from models.meeting import Meeting
+from models.meeting_live_session import MeetingLiveSession
 from models.meeting_member_link import MeetingMemberLink
 from models.member import Member
 from models.user import User
@@ -38,13 +39,15 @@ def list_meetings(
     if scope not in ("upcoming", "conducted", "all"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid scope")
     skip, limit = page
-    stmt = select(Meeting).where(Meeting.user_id == user.id)
-    today = date.today()
-    if scope == "upcoming":
-        stmt = stmt.where(
-            Meeting.status.in_(("draft", "scheduled", "in_progress")),
-            Meeting.meeting_date >= today,
+    stmt = (
+        select(Meeting)
+        .where(Meeting.user_id == user.id)
+        .options(
+            selectinload(Meeting.member_links).selectinload(MeetingMemberLink.member),
         )
+    )
+    if scope == "upcoming":
+        stmt = stmt.where(Meeting.status.in_(("draft", "scheduled", "in_progress")))
     elif scope == "conducted":
         stmt = stmt.where(Meeting.status == "completed")
     if q:
@@ -101,6 +104,11 @@ def update_meeting(
     m = db.get(Meeting, meeting_id)
     if m is None or m.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Meeting not found")
+    if m.status == "completed":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="Completed meetings cannot be edited",
+        )
     data = body.model_dump(exclude_unset=True)
     if "title" in data and data["title"] is not None:
         data["title"] = str(data["title"]).strip()
@@ -172,6 +180,18 @@ def complete_meeting(
     m = db.get(Meeting, meeting_id)
     if m is None or m.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Meeting not found")
+    final_elapsed_seconds: int | None = None
+    target_seconds = int(m.duration_minutes * 60)
+    overtime_seconds: int | None = None
+    session_row = db.get(MeetingLiveSession, user.id)
+    if session_row is not None and session_row.meeting_id == meeting_id:
+        final_elapsed_seconds = int(session_row.elapsed_seconds)
+        if (not session_row.is_paused) and session_row.running_since_ms is not None:
+            now_ms = int(datetime.now().timestamp() * 1000)
+            delta = max(0, (now_ms - int(session_row.running_since_ms)) // 1000)
+            final_elapsed_seconds += int(delta)
+        overtime_seconds = max(0, final_elapsed_seconds - target_seconds)
+        db.delete(session_row)
     now = datetime.now()
     m.status = "completed"
     m.conducted_at = now
@@ -179,4 +199,11 @@ def complete_meeting(
     db.commit()
     db.refresh(m)
     ca = m.conducted_at or now
-    return MeetingCompleteResponse(id=m.id, status=m.status, conducted_at=ca)
+    return MeetingCompleteResponse(
+        id=m.id,
+        status=m.status,
+        conducted_at=ca,
+        final_elapsed_seconds=final_elapsed_seconds,
+        target_seconds=target_seconds,
+        overtime_seconds=overtime_seconds,
+    )

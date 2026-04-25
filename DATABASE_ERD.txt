@@ -1,0 +1,166 @@
+================================================================================
+  CURRENT DATABASE ERD — Minoto backend (SQLAlchemy + Alembic)
+  Source: models/*.py, alembic/versions/001_initial_schema.py, 002_add_user_avatar_url.py
+================================================================================
+
+
+--------------------------------------------------------------------------------
+ENTITY LIST (TABLES)
+--------------------------------------------------------------------------------
+
+  users                  PK: id (varchar 36)
+  members                PK: id  |  FK: user_id → users.id (CASCADE)
+  meetings               PK: id  |  FK: user_id → users.id (CASCADE)
+  meeting_members        PK: (meeting_id, member_id)  |  FKs → meetings, members (CASCADE)
+  meeting_live_sessions  PK: user_id  |  FK: user_id → users.id, meeting_id → meetings.id (CASCADE)
+
+
+--------------------------------------------------------------------------------
+RELATIONSHIPS (CARDINALITY)
+--------------------------------------------------------------------------------
+
+  User 1 ──< Member              (one account owns many directory members)
+  User 1 ──< Meeting             (one account owns many meetings)
+  User 1 ──o| MeetingLiveSession (at most one live-session row per user; PK = user_id)
+
+  Meeting N ──< meeting_members >── M Member   (many-to-many via junction table)
+
+  MeetingLiveSession >── Meeting   (each session row points to one meeting)
+
+
+--------------------------------------------------------------------------------
+COLUMNS (QUICK REFERENCE)
+--------------------------------------------------------------------------------
+
+  users
+    id, email (UNIQUE), full_name, hashed_password,
+    default_export_format, include_timestamps_default,
+    avatar_url (nullable; added migration 002),
+    created_at, updated_at
+
+  members
+    id, user_id (FK users), name, email, role, member_since, saved_to_directory,
+    avatar_url, has_voice_sample, voice_file_path, voice_duration_seconds,
+    created_at, updated_at
+
+  meetings
+    id, user_id (FK users), title, meeting_date, start_time, duration_minutes,
+    status, conducted_at, created_at, updated_at
+
+  meeting_members  (ORM: MeetingMemberLink)
+    meeting_id (FK meetings, part of PK),
+    member_id  (FK members, part of PK),
+    is_new_for_meeting
+
+  meeting_live_sessions
+    user_id (PK, FK users),
+    meeting_id (FK meetings, indexed),
+    title, elapsed_seconds, is_paused, running_since_ms, total_target_seconds
+
+
+--------------------------------------------------------------------------------
+MERMAID (paste into https://mermaid.live or GitHub markdown)
+--------------------------------------------------------------------------------
+
+erDiagram
+    users ||--o{ members : "owns"
+    users ||--o{ meetings : "owns"
+    users ||--o| meeting_live_sessions : "has_at_most_one"
+
+    meetings ||--o{ meeting_members : "roster"
+    members ||--o{ meeting_members : "appears_on"
+
+    meetings ||--o{ meeting_live_sessions : "referenced_by"
+
+    users {
+        string id PK
+        string email UK
+        string full_name
+        string hashed_password
+        string default_export_format
+        boolean include_timestamps_default
+        string avatar_url "nullable"
+        datetime created_at
+        datetime updated_at
+    }
+
+    members {
+        string id PK
+        string user_id FK
+        string name
+        string email
+        string role "nullable"
+        date member_since "nullable"
+        boolean saved_to_directory
+        string avatar_url "nullable"
+        boolean has_voice_sample
+        string voice_file_path "nullable"
+        int voice_duration_seconds "nullable"
+        datetime created_at
+        datetime updated_at
+    }
+
+    meetings {
+        string id PK
+        string user_id FK
+        string title
+        date meeting_date
+        string start_time
+        int duration_minutes
+        string status
+        datetime conducted_at "nullable"
+        datetime created_at
+        datetime updated_at
+    }
+
+    meeting_members {
+        string meeting_id PK_FK
+        string member_id PK_FK
+        boolean is_new_for_meeting
+    }
+
+    meeting_live_sessions {
+        string user_id PK_FK
+        string meeting_id FK
+        string title
+        int elapsed_seconds
+        boolean is_paused
+        bigint running_since_ms "nullable"
+        int total_target_seconds
+    }
+
+
+--------------------------------------------------------------------------------
+ASCII DIAGRAM (rough)
+--------------------------------------------------------------------------------
+
+                    +------------------+
+                    |      users       |
+                    +------------------+
+                    | id (PK)         |
+                    | email (UNIQUE)  |
+                    | ...             |
+                    +--------+---------+
+                             |
+         +-------------------+-------------------+-------------------+
+         |                   |                   |                   |
+         v                   v                   v                   |
+  +-------------+     +-------------+     +----------------------+   |
+  |   members   |     |  meetings   |     | meeting_live_sessions|   |
+  +-------------+     +-------------+     +----------------------+   |
+  | id (PK)     |     | id (PK)     |     | user_id (PK,FK)-----+---+--+
+  | user_id(FK)-+---> | user_id(FK)-+---> | meeting_id (FK)----+---+
+  | ...         |     | ...         |     | title, timer...    |
+  +------+------+     +------+------+     +----------------------+
+         |                   |
+         |    +--------------+---------------+
+         |    | meeting_members (junction)    |
+         +--->| meeting_id (PK,FK)           |
+              | member_id  (PK,FK)           |
+              | is_new_for_meeting          |
+              +-----------------------------+
+
+
+================================================================================
+END
+================================================================================

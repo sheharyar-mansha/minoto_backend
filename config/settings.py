@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     # Voice uploads stored under this directory (created at startup).
     UPLOAD_ROOT: str = "uploads"
     MAX_VOICE_UPLOAD_MB: int = 25
+    TRANSCRIBE_MODEL_SIZE: str = "base"
+    TRANSCRIBE_DEVICE: str = "cpu"
+    TRANSCRIBE_COMPUTE_TYPE: str = "int8"
+    ENABLE_SPEAKER_MATCHING: bool = True
+    SPEAKER_MATCH_MIN_SCORE: float = 0.58
+    SPEAKER_MATCH_MARGIN: float = 0.06
+    SPEAKER_MATCH_MAX_GAP_SEC: float = 1.25
+    SPEAKER_MATCH_TEXT_SIMILARITY: float = 0.86
+    PYANNOTE_EMBEDDING_MODEL: str = "pyannote/embedding"
+    PYANNOTE_AUTH_TOKEN: str | None = None
 
 
 settings = Settings()

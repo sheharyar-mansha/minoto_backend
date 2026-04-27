@@ -1,12 +1,12 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import delete, exists, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from api.deps import get_current_user, pagination
-from db.session import get_db
+from db.session import SessionLocal, get_db
 from models.meeting import Meeting
 from models.meeting_live_session import MeetingLiveSession
 from models.meeting_member_link import MeetingMemberLink
@@ -21,11 +21,30 @@ from schemas.meeting import (
     MeetingParticipantsPut,
     MeetingUpdate,
 )
+from services.meeting_transcript import generate_meeting_transcript
 from services.meeting_present import load_meeting_with_links, meeting_detail, meeting_list_item
 from services.pagination import run_paginated
 from utils.ids import new_id
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
+
+
+def _generate_transcript_background(
+    meeting_id: str,
+    conducted_at_iso: str,
+    final_elapsed_seconds: int | None,
+) -> None:
+    ca = datetime.fromisoformat(conducted_at_iso)
+    db = SessionLocal()
+    try:
+        generate_meeting_transcript(
+            db,
+            meeting_id=meeting_id,
+            conducted_at=ca,
+            final_elapsed_seconds=final_elapsed_seconds,
+        )
+    finally:
+        db.close()
 
 
 def _is_member_user(user: User) -> bool:
@@ -208,6 +227,7 @@ def complete_meeting(
     meeting_id: str,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
+    background_tasks: BackgroundTasks,
 ) -> MeetingCompleteResponse:
     m = db.get(Meeting, meeting_id)
     if m is None or m.user_id != user.id:
@@ -231,6 +251,13 @@ def complete_meeting(
     db.commit()
     db.refresh(m)
     ca = m.conducted_at or now
+    conducted_iso = ca.isoformat()
+    background_tasks.add_task(
+        _generate_transcript_background,
+        meeting_id,
+        conducted_iso,
+        final_elapsed_seconds,
+    )
     return MeetingCompleteResponse(
         id=m.id,
         status=m.status,

@@ -190,6 +190,29 @@ POST   /api/v1/meetings/{meeting_id}/complete
            "final_elapsed_seconds"?, "target_seconds"?, "overtime_seconds"?
          }
 
+POST   /api/v1/meetings/{meeting_id}/recordings
+       Content-Type: multipart/form-data
+       Field: file (audio chunk/full recording from one device)
+       Query:
+         duration_seconds? (optional int)
+         device_label? (optional string, max 128)
+       Access:
+         - owner (admin/host): allowed
+         - member user assigned to the meeting by email: allowed
+       Response 201: MeetingDeviceRecordingOut
+         {
+           "id", "meeting_id", "uploader_user_id", "participant_member_id",
+           "device_label", "media_path", "mime_type",
+           "duration_seconds", "byte_size", "created_at"
+         }
+
+GET    /api/v1/meetings/{meeting_id}/recordings
+       Lists uploaded device recordings for this meeting.
+       Access:
+         - owner: sees all meeting recordings
+         - assigned member: sees only recordings uploaded by that member user
+       Response 200: MeetingDeviceRecordingOut[]
+
 --------------------------------------------------------------------------------
 LIVE RECORDING SESSION (mobile timer sync)  (prefix /api/v1/sessions)
 --------------------------------------------------------------------------------
@@ -226,7 +249,8 @@ DATABASE & MIGRATIONS
 - Configure DATABASE_URL in .env (SQLite default: sqlite:///./minoto.db).
 - From backend folder:
     alembic upgrade head
-- Tables: users, members, meetings, meeting_members, meeting_live_sessions
+- Tables: users, members, meetings, meeting_members, meeting_live_sessions,
+  meeting_device_recordings
 
 --------------------------------------------------------------------------------
 RUNNING LOCALLY

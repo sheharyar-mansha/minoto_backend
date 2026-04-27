@@ -25,6 +25,10 @@ class LiveSessionOut(BaseModel):
     is_paused: bool
     running_since_ms: int | None
     total_target_seconds: int
+    server_now_ms: int = Field(description="Server time (ms epoch) at response")
+    display_elapsed_seconds: int = Field(
+        description="Elapsed seconds from server clock (matches running_since_ms domain)",
+    )
 
 
 class StatsSummaryOut(BaseModel):

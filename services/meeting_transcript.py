@@ -21,6 +21,7 @@ from models.meeting_transcript_segment import MeetingTranscriptSegment
 from models.user import User
 from services.speaker_matching import (
     SpeakerMatchCandidate,
+    SpeakerMatchResult,
     build_reference_embeddings,
     decide_match,
     dedupe_segment_indexes,
@@ -116,6 +117,39 @@ def _apply_soft_biases(
         adjusted.append(SpeakerMatchCandidate(user_id=c.user_id, score=c.score + bonus))
     adjusted.sort(key=lambda c: c.score, reverse=True)
     return adjusted
+
+
+def _uploader_borderline_fallback(
+    *,
+    candidates: list[SpeakerMatchCandidate],
+    uploader_user_id: str,
+    current: SpeakerMatchResult,
+) -> SpeakerMatchResult:
+    """
+    In multi-device meetings, cross-bleed can make top-vs-uploader scores very close.
+    If uploader score is decent and close to top, prefer uploader over outsider or
+    weak cross-device matches.
+    """
+    if not candidates:
+        return current
+    best = candidates[0]
+    uploader = next((c for c in candidates if c.user_id == uploader_user_id), None)
+    if uploader is None or uploader.score < settings.SPEAKER_MATCH_UPLOADER_MIN_SCORE:
+        return current
+
+    close_to_best = (best.score - uploader.score) <= settings.SPEAKER_MATCH_UPLOADER_STEAL_MARGIN
+    if not close_to_best:
+        return current
+
+    # Keep existing confident uploader decisions as-is.
+    if current.match_status == "matched" and current.matched_user_id == uploader_user_id:
+        return current
+
+    return SpeakerMatchResult(
+        matched_user_id=uploader_user_id,
+        match_score=uploader.score,
+        match_status="matched",
+    )
 
 
 def _debug_speaker_matching(
@@ -464,6 +498,11 @@ def generate_meeting_transcript(
                         gap_from_prev_sec=gap,
                     )
                     decision = decide_match(candidates)
+                    decision = _uploader_borderline_fallback(
+                        candidates=candidates,
+                        uploader_user_id=d.uploader_user_id,
+                        current=decision,
+                    )
                     wc = _word_count(d.text)
                     if wc < settings.SPEAKER_MATCH_MIN_WORDS:
                         best = candidates[0] if candidates else None

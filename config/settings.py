@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     SPEAKER_MATCH_MIN_WORDS: int = 3
     SPEAKER_MATCH_SHORT_UTTERANCE_MIN_SCORE: float = 0.28
     SPEAKER_MATCH_UPLOADER_BONUS: float = 0.045
+    # Borderline fallback: if uploader score is reasonable and close to best,
+    # prefer uploader over outsider/cross-device bleed.
+    SPEAKER_MATCH_UPLOADER_MIN_SCORE: float = 0.18
+    SPEAKER_MATCH_UPLOADER_STEAL_MARGIN: float = 0.12
     SPEAKER_MATCH_CONTINUITY_BONUS: float = 0.03
     SPEAKER_MATCH_CONTINUITY_WINDOW_SEC: float = 8.0
     SPEAKER_DEDUPE_MAX_GAP_SEC: float = 4.0

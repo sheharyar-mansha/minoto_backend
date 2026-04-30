@@ -109,9 +109,9 @@ def get_meeting_transcript(
                 end_sec=float(r.end_sec),
                 speaker_user_id=r.matched_user_id or r.uploader_user_id,
                 speaker_label=(
-                    "Unknown"
-                    if r.match_status == "unknown"
-                    else users.get(r.matched_user_id or r.uploader_user_id, "Unknown")
+                    "Outsider"
+                    if r.match_status in {"unknown", "outsider"}
+                    else users.get(r.matched_user_id or r.uploader_user_id, "Outsider")
                 ),
                 text=r.text,
                 confidence=r.confidence,

@@ -1,6 +1,7 @@
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IllegalStateChangeError
 from sqlalchemy.orm import Session, sessionmaker
 
 from config.settings import settings
@@ -22,4 +23,9 @@ def get_db() -> Generator[Session, None, None]:
     try:
         yield db
     finally:
-        db.close()
+        # Ctrl+C / server shutdown can cancel requests while a sync DB dependency is
+        # still opening a connection; closing then raises IllegalStateChangeError.
+        try:
+            db.close()
+        except IllegalStateChangeError:
+            pass

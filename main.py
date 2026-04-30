@@ -1,5 +1,9 @@
 """Run from this folder: uvicorn main:app --reload"""
 
+import hf_hub_compat
+
+hf_hub_compat.apply_hf_hub_use_auth_token_compat()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

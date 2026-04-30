@@ -31,8 +31,19 @@ class Settings(BaseSettings):
     TRANSCRIBE_DEVICE: str = "cpu"
     TRANSCRIBE_COMPUTE_TYPE: str = "int8"
     ENABLE_SPEAKER_MATCHING: bool = True
-    SPEAKER_MATCH_MIN_SCORE: float = 0.58
-    SPEAKER_MATCH_MARGIN: float = 0.06
+    DEBUG_SPEAKER_MATCHING: bool = False
+    # Cosine similarity on pyannote embeddings; phone/meeting vs enrollment often ~0.25–0.45.
+    SPEAKER_MATCH_MIN_SCORE: float = 0.32
+    # When only one voice is enrolled there is no "which member?" ambiguity — allow lower similarity.
+    SPEAKER_MATCH_MIN_SCORE_SINGLE_REF: float = 0.20
+    SPEAKER_MATCH_MARGIN: float = 0.05
+    SPEAKER_MATCH_MIN_SEGMENT_SEC: float = 0.8
+    SPEAKER_MATCH_MIN_WORDS: int = 3
+    SPEAKER_MATCH_SHORT_UTTERANCE_MIN_SCORE: float = 0.28
+    SPEAKER_MATCH_UPLOADER_BONUS: float = 0.045
+    SPEAKER_MATCH_CONTINUITY_BONUS: float = 0.03
+    SPEAKER_MATCH_CONTINUITY_WINDOW_SEC: float = 8.0
+    SPEAKER_DEDUPE_MAX_GAP_SEC: float = 4.0
     SPEAKER_MATCH_MAX_GAP_SEC: float = 1.25
     SPEAKER_MATCH_TEXT_SIMILARITY: float = 0.86
     PYANNOTE_EMBEDDING_MODEL: str = "pyannote/embedding"

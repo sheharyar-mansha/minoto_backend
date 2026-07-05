@@ -1,6 +1,6 @@
 # MOM backend (Python API)
 
-FastAPI service for Minoto: auth, members, meetings, uploads (voice/avatars), and related JSON APIs. This repository is the **backend only**; frontends (e.g. mobile or web) live in separate projects.
+FastAPI service for Minoto: auth, users, meetings, uploads (voice/avatars), transcription pipeline, and related JSON APIs. This repository is the **backend only**; frontends (e.g. mobile or web) live in separate projects.
 
 - **Default branch:** **`mom-be`** (not `main`).
 - **Contributing:** open a **feature branch** from `mom-be` and a **pull request** into **`mom-be`**. Do **not** push commits directly to **`mom-be`**.
@@ -32,6 +32,8 @@ FastAPI service for Minoto: auth, members, meetings, uploads (voice/avatars), an
 - **Git**
 - **PostgreSQL** — recommended when connecting the web or mobile app to a real API; use `DATABASE_URL` as in `.env.example`.
 - **SQLite** — optional zero-install alternative if you leave `DATABASE_URL` as `sqlite:///./minoto.db`.
+
+**Python packages (API + transcription pipeline):** one install — `pip install -r requirements.txt` (includes PyTorch, faster-whisper, pyannote, bundled ffmpeg via `imageio-ffmpeg`). Optional NVIDIA GPU: `pip install -r requirements-gpu.txt`. API keys (`PYANNOTE_AUTH_TOKEN`, `GEMINI_API_KEY`) go in `.env` — see `.env.example` and [README_V2.md](./README_V2.md).
 
 ---
 
@@ -150,23 +152,39 @@ Copy from **`.env.example`**; never commit **`.env`**.
 
 ## Database & migrations
 
-- **SQLite (default):** zero server install; database file is typically **`minoto.db`** next to `main.py` when using `sqlite:///./minoto.db`.
-- **PostgreSQL:** set `DATABASE_URL` and create an **empty** database first (see [PostgreSQL notes](#postgresql-notes)).
+Schema is managed by **Alembic** (`001` … `010`). Revision **`010`** is v2: participants are rows in **`users`**, roster links use **`meeting_participants`**, and legacy **`members`** / **`meeting_members`** tables are dropped after data is migrated.
 
-**Apply or update schema** (after clone or `git pull` when migrations changed):
+**Normal team workflow** (existing DB or after `git pull`):
 
 ```powershell
 python -m alembic upgrade head
 ```
 
+That applies any pending revisions. On a v1 database, **`010`** copies meeting rosters from `meeting_members` → `meeting_participants` (via `members.user_id`) before dropping legacy tables.
+
+**Fresh empty PostgreSQL database:**
+
+```powershell
+python -m alembic upgrade head
+```
+
+Creates all tables through `010`. Migration **`004`** seeds admin `admin@minoto.com` / `Admin123!` — change that password immediately.
+
+**Wipe all data but keep schema** (dev only):
+
+```sql
+-- Run scripts/clear_all_data_postgres.sql in psql/pgAdmin
+```
+
+**Nuclear reset** (drops every table — dev only):
+
+1. Run `scripts/nuclear_wipe_postgres.sql`
+2. `python -m alembic stamp base`
+3. `python -m alembic upgrade head`
+
+See **[README_V2.md](./README_V2.md)** and **[docs/SCHEMA_V2.md](./docs/SCHEMA_V2.md)** for the v2 model. Interactive API docs: http://127.0.0.1:8000/docs
+
 Use `python -m alembic` so you do not rely on `alembic` being on the system `PATH` (common on Windows).
-
-**Revisions in repo (examples):**
-
-- **`001_initial_schema`** — users, members, meetings, `meeting_members`, `meeting_live_sessions`
-- **`002_add_user_avatar_url`** — adds `users.avatar_url`
-
-If Alembic cannot connect, fix `DATABASE_URL` and ensure the DB exists (for Postgres).
 
 ---
 
@@ -197,7 +215,9 @@ Static uploads are served under **`/media/...`** (see `main.py`); upload directo
 
 ## API reference
 
-**`API_DOCUMENTATION.txt`** in this folder lists routes, bodies, and responses for the team. **`GET /openapi.json`** is also available from a running server.
+**Swagger UI:** http://127.0.0.1:8000/docs (authoritative). **`GET /openapi.json`** for machine-readable spec.
+
+Key v2 routes: `/auth/*`, `/users/me`, `/users/accounts` (admin participant list), `/meetings/*`, `/sessions/*`, `/meetings/{id}/recordings`, `/meetings/{id}/transcript`.
 
 ---
 
@@ -224,7 +244,7 @@ If no server appears in pgAdmin: **Register** → **Server** with host `localhos
 | Path | Role |
 | ---- | ---- |
 | `main.py` | FastAPI app entry, CORS, `/media` mount, includes `api_router` |
-| `api/v1/` | Versioned routers: `auth`, `users`, `members`, `meetings`, `sessions`, `stats` |
+| `api/v1/` | Versioned routers: `auth`, `users`, `meetings`, `sessions`, `stats`, `transcripts`, `meeting_recordings` |
 | `routes/` | Small shared routes (e.g. `health`) wired from `api/v1/router.py` |
 | `models/` | SQLAlchemy ORM |
 | `schemas/` | Pydantic request/response models |

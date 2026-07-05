@@ -13,9 +13,13 @@ class MeetingDeviceRecordingOut(BaseModel):
     mime_type: str | None
     duration_seconds: int | None
     byte_size: int
+    recording_started_at: datetime | None = None
+    recording_ended_at: datetime | None = None
     created_at: datetime
 
 
 class MeetingDeviceRecordingUploadQuery(BaseModel):
     duration_seconds: int | None = Field(default=None, ge=0)
     device_label: str | None = Field(default=None, max_length=128)
+    recording_started_at: str | None = None
+    recording_ended_at: str | None = None

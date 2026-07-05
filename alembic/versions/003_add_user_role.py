@@ -20,14 +20,13 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column(
         "users",
-        sa.Column("role", sa.String(length=32), nullable=False, server_default="member"),
+        sa.Column("role", sa.String(length=32), nullable=False, server_default="participant"),
     )
     op.create_index("ix_users_role", "users", ["role"], unique=False)
-    op.execute("UPDATE users SET role = 'member' WHERE role IS NULL")
+    op.execute("UPDATE users SET role = 'participant' WHERE role IS NULL")
     op.alter_column("users", "role", server_default=None)
 
 
 def downgrade() -> None:
     op.drop_index("ix_users_role", table_name="users")
     op.drop_column("users", "role")
-

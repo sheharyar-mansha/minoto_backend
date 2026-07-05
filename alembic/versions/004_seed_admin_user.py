@@ -87,4 +87,3 @@ def downgrade() -> None:
         sa.text("DELETE FROM users WHERE email = :email"),
         {"email": ADMIN_EMAIL},
     )
-

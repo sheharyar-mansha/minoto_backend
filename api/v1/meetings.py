@@ -2,16 +2,16 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy import delete, exists, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from api.deps import get_current_user, pagination
-from db.session import SessionLocal, get_db
+from db.session import get_db
 from models.meeting import Meeting
 from models.meeting_live_session import MeetingLiveSession
-from models.meeting_member_link import MeetingMemberLink
-from models.member import Member
+from models.meeting_participant import MeetingParticipant
 from models.user import User
+from services.transcript_jobs import run_generate_meeting_transcript_task
 from schemas.common import PageMeta, PaginatedResponse
 from schemas.meeting import (
     MeetingCompleteResponse,
@@ -21,46 +21,12 @@ from schemas.meeting import (
     MeetingParticipantsPut,
     MeetingUpdate,
 )
-from services.meeting_transcript import generate_meeting_transcript
+from services.meeting_access import can_access_meeting, is_admin_user, is_participant_user, participant_visibility_clause
 from services.meeting_present import load_meeting_with_links, meeting_detail, meeting_list_item
 from services.pagination import run_paginated
 from utils.ids import new_id
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
-
-
-def _generate_transcript_background(
-    meeting_id: str,
-    conducted_at_iso: str,
-    final_elapsed_seconds: int | None,
-) -> None:
-    ca = datetime.fromisoformat(conducted_at_iso)
-    db = SessionLocal()
-    try:
-        generate_meeting_transcript(
-            db,
-            meeting_id=meeting_id,
-            conducted_at=ca,
-            final_elapsed_seconds=final_elapsed_seconds,
-        )
-    finally:
-        db.close()
-
-
-def _is_member_user(user: User) -> bool:
-    return (user.role or "").strip().lower() == "member"
-
-
-def _member_visibility_exists_clause(user: User):
-    email = (user.email or "").strip().lower()
-    return exists(
-        select(MeetingMemberLink.meeting_id)
-        .join(Member, Member.id == MeetingMemberLink.member_id)
-        .where(
-            MeetingMemberLink.meeting_id == Meeting.id,
-            func.lower(Member.email) == email,
-        )
-    )
 
 
 @router.get("", response_model=PaginatedResponse[MeetingListItemOut])
@@ -74,17 +40,10 @@ def list_meetings(
     if scope not in ("upcoming", "conducted", "all"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid scope")
     skip, limit = page
-    visibility = (
-        _member_visibility_exists_clause(user)
-        if _is_member_user(user)
-        else (Meeting.user_id == user.id)
-    )
     stmt = (
         select(Meeting)
-        .where(visibility)
-        .options(
-            selectinload(Meeting.member_links).selectinload(MeetingMemberLink.member),
-        )
+        .where(participant_visibility_clause(user))
+        .options(selectinload(Meeting.participants).selectinload(MeetingParticipant.user))
     )
     if scope == "upcoming":
         stmt = stmt.where(Meeting.status.in_(("draft", "scheduled", "in_progress")))
@@ -106,6 +65,8 @@ def create_meeting(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> MeetingDetailOut:
+    if not is_admin_user(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Only admin can create meetings")
     m = Meeting(
         id=new_id(),
         user_id=user.id,
@@ -129,20 +90,9 @@ def get_meeting(
     db: Annotated[Session, Depends(get_db)],
 ) -> MeetingDetailOut:
     m = load_meeting_with_links(db, meeting_id)
-    if m is None:
+    if m is None or not can_access_meeting(m, user, db):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Meeting not found")
-    if m.user_id == user.id:
-        return meeting_detail(m)
-    if _is_member_user(user):
-        current_email = (user.email or "").strip().lower()
-        assigned = any(
-            ((link.member.email if link.member is not None else "") or "").strip().lower()
-            == current_email
-            for link in m.member_links
-        )
-        if assigned:
-            return meeting_detail(m)
-    raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Meeting not found")
+    return meeting_detail(m)
 
 
 @router.patch("/{meeting_id}", response_model=MeetingDetailOut)
@@ -156,10 +106,7 @@ def update_meeting(
     if m is None or m.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Meeting not found")
     if m.status == "completed":
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail="Completed meetings cannot be edited",
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Completed meetings cannot be edited")
     data = body.model_dump(exclude_unset=True)
     if "title" in data and data["title"] is not None:
         data["title"] = str(data["title"]).strip()
@@ -195,27 +142,17 @@ def replace_participants(
     m = db.get(Meeting, meeting_id)
     if m is None or m.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Meeting not found")
-    db.execute(delete(MeetingMemberLink).where(MeetingMemberLink.meeting_id == meeting_id))
+    user_ids = body.resolved_user_ids()
+    db.execute(delete(MeetingParticipant).where(MeetingParticipant.meeting_id == meeting_id))
     seen: set[str] = set()
-    for mid in body.member_ids:
-        if mid in seen:
+    for uid in user_ids:
+        if uid in seen:
             continue
-        seen.add(mid)
-        mem = db.get(Member, mid)
-        if mem is None or mem.user_id != user.id:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid member_id: {mid}",
-            )
-        # "New" for this meeting = no enrolled voice sample yet (first-time / needs recording).
-        is_new = not mem.has_voice_sample
-        db.add(
-            MeetingMemberLink(
-                meeting_id=meeting_id,
-                member_id=mid,
-                is_new_for_meeting=is_new,
-            )
-        )
+        seen.add(uid)
+        participant = db.get(User, uid)
+        if participant is None or participant.is_admin():
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=f"Invalid participant user_id: {uid}")
+        db.add(MeetingParticipant(meeting_id=meeting_id, user_id=uid))
     db.commit()
     loaded = load_meeting_with_links(db, meeting_id)
     assert loaded is not None
@@ -247,15 +184,15 @@ def complete_meeting(
     now = datetime.now()
     m.status = "completed"
     m.conducted_at = now
+    m.final_elapsed_seconds = final_elapsed_seconds
     db.add(m)
     db.commit()
     db.refresh(m)
     ca = m.conducted_at or now
-    conducted_iso = ca.isoformat()
     background_tasks.add_task(
-        _generate_transcript_background,
+        run_generate_meeting_transcript_task,
         meeting_id,
-        conducted_iso,
+        ca.isoformat(),
         final_elapsed_seconds,
     )
     return MeetingCompleteResponse(

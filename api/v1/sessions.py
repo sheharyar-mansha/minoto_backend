@@ -2,17 +2,15 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user
 from db.session import get_db
 from models.meeting import Meeting
 from models.meeting_live_session import MeetingLiveSession
-from models.meeting_member_link import MeetingMemberLink
-from models.member import Member
 from models.user import User
 from schemas.session import LiveSessionOut, LiveSessionUpsert
+from services.meeting_access import can_access_meeting
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -36,26 +34,8 @@ def _live_session_out(row: MeetingLiveSession) -> LiveSessionOut:
     )
 
 
-def _is_member_user(user: User) -> bool:
-    return (user.role or "").strip().lower() == "member"
-
-
 def _can_access_meeting(meeting: Meeting, user: User, db: Session) -> bool:
-    if meeting.user_id == user.id:
-        return True
-    if not _is_member_user(user):
-        return False
-    email = (user.email or "").strip().lower()
-    assigned_stmt = (
-        select(func.count())
-        .select_from(MeetingMemberLink)
-        .join(Member, Member.id == MeetingMemberLink.member_id)
-        .where(
-            MeetingMemberLink.meeting_id == meeting.id,
-            func.lower(Member.email) == email,
-        )
-    )
-    return (db.scalar(assigned_stmt) or 0) > 0
+    return can_access_meeting(meeting, user, db)
 
 
 @router.get("/active", response_model=LiveSessionOut | None)

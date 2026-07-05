@@ -16,10 +16,19 @@ class MeetingTranscriptSegmentOut(BaseModel):
     match_status: str
 
 
+class MeetingMinutesOut(BaseModel):
+    summary: str = ""
+    decisions: list[str] = Field(default_factory=list)
+    action_items: list[dict] = Field(default_factory=list)
+
+
 class MeetingTranscriptOut(BaseModel):
     meeting_id: str
     status: str
+    pipeline_version: str | None = None
+    pipeline_stage: str | None = None
     generated_at: datetime | None = None
     merged_text: str | None = None
     error_message: str | None = None
+    minutes: MeetingMinutesOut | None = None
     segments: list[MeetingTranscriptSegmentOut]

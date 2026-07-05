@@ -1,0 +1,10 @@
+# Reinstall PyTorch with NVIDIA CUDA 12.4 wheels (run AFTER requirements.txt).
+# Skip this file on CPU-only machines or Mac without NVIDIA GPU.
+#
+#   pip install -r requirements-gpu.txt
+#
+# Other CUDA versions: https://pytorch.org/get-started/locally/
+
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch>=2.1.0,<3
+torchaudio>=2.1.0,<3

@@ -19,6 +19,7 @@ class Meeting(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(32), default="scheduled", index=True)
     conducted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    final_elapsed_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -26,8 +27,19 @@ class Meeting(Base):
     )
 
     owner = relationship("User", back_populates="meetings")
-    member_links = relationship(
-        "MeetingMemberLink",
+    participants = relationship(
+        "MeetingParticipant",
         back_populates="meeting",
+        cascade="all, delete-orphan",
+    )
+    device_recordings = relationship(
+        "MeetingDeviceRecording",
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+    )
+    transcript = relationship(
+        "MeetingTranscript",
+        back_populates="meeting",
+        uselist=False,
         cascade="all, delete-orphan",
     )

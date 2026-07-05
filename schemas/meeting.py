@@ -64,9 +64,13 @@ class MeetingDetailOut(BaseModel):
 
 
 class MeetingParticipantsPut(BaseModel):
-    """Replace meeting roster. Server sets is_new_for_meeting from each member.saved_to_directory."""
+    """Replace meeting roster with participant user ids."""
 
     member_ids: list[str] = Field(default_factory=list)
+    user_ids: list[str] = Field(default_factory=list)
+
+    def resolved_user_ids(self) -> list[str]:
+        return self.user_ids if self.user_ids else self.member_ids
 
 
 class MeetingCompleteResponse(BaseModel):

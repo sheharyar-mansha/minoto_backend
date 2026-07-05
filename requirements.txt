@@ -1,3 +1,12 @@
+# Minoto backend — install everything with:
+#   pip install -r requirements.txt
+#
+# Optional NVIDIA GPU (CUDA 12.4 wheels, after the line above):
+#   pip install -r requirements-gpu.txt
+#
+# Python 3.11+ recommended. API keys go in .env (see .env.example), not here.
+
+# --- Web API ---
 fastapi>=0.115.0,<1
 uvicorn[standard]>=0.32.0,<1
 sqlalchemy>=2.0.36,<3
@@ -11,7 +20,18 @@ passlib[bcrypt]>=1.7.4,<2
 bcrypt>=3.2.0,<4
 python-multipart>=0.0.9,<1
 email-validator>=2.0.0,<3
+httpx>=0.27.0,<1
+
+# --- Audio pipeline (ASR, alignment, speaker embeddings) ---
+numpy>=1.26.0,<3
+scipy>=1.11.0,<2
+soundfile>=0.12.1,<1
+imageio-ffmpeg>=0.5.1,<1
+torch>=2.1.0,<3
+torchaudio>=2.1.0,<3
+huggingface-hub>=0.23.0,<1
 faster-whisper>=1.0.3,<2
 pyannote.audio>=3.1.1,<4
-numpy>=1.26.0,<3
-soundfile>=0.12.1,<1
+
+# --- Tests ---
+pytest>=8.0.0,<9

@@ -1,24 +1,26 @@
 import random
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from models.meeting import Meeting
-from models.meeting_member_link import MeetingMemberLink
+from models.meeting_participant import MeetingParticipant
+from models.user import User
 from schemas.meeting import MeetingDetailOut, MeetingListItemOut, ParticipantPreviewOut
 from utils.formatting import date_label, duration_label
 
 
 def meeting_list_item(m: Meeting) -> MeetingListItemOut:
-    links = list(m.member_links)
+    links = list(m.participants)
     preview: list[ParticipantPreviewOut] = []
     for ln in links[:3]:
-        mem = ln.member
+        user = ln.user
         preview.append(
             ParticipantPreviewOut(
-                member_id=ln.member_id,
-                name=mem.name,
-                avatar_url=mem.avatar_url,
-                is_new_for_meeting=bool(ln.is_new_for_meeting),
+                member_id=ln.user_id,
+                name=user.full_name,
+                avatar_url=user.avatar_url,
+                is_new_for_meeting=False,
             )
         )
     return MeetingListItemOut(
@@ -35,26 +37,22 @@ def meeting_list_item(m: Meeting) -> MeetingListItemOut:
 
 
 def meeting_detail(m: Meeting) -> MeetingDetailOut:
-    links = list(m.member_links)
-    new_count = sum(1 for ln in links if ln.is_new_for_meeting)
-    existing_count = sum(1 for ln in links if not ln.is_new_for_meeting)
+    links = list(m.participants)
     avatars: list[str | None] = []
     for ln in links[:3]:
-        avatars.append(ln.member.avatar_url)
+        avatars.append(ln.user.avatar_url)
     while len(avatars) < 3:
         avatars.append(None)
 
-    existing_links = [ln for ln in links if not ln.is_new_for_meeting]
-    random.shuffle(existing_links)
-    preview_n = min(3, len(existing_links))
-    existing_preview = [existing_links[i].member.avatar_url for i in range(preview_n)]
+    existing_preview = [ln.user.avatar_url for ln in links[: min(3, len(links))]]
+    random.shuffle(existing_preview)
 
     roster = [
         ParticipantPreviewOut(
-            member_id=ln.member_id,
-            name=ln.member.name,
-            avatar_url=ln.member.avatar_url,
-            is_new_for_meeting=bool(ln.is_new_for_meeting),
+            member_id=ln.user_id,
+            name=ln.user.full_name,
+            avatar_url=ln.user.avatar_url,
+            is_new_for_meeting=False,
         )
         for ln in links
     ]
@@ -68,23 +66,19 @@ def meeting_detail(m: Meeting) -> MeetingDetailOut:
         meeting_date=m.meeting_date,
         duration_minutes=m.duration_minutes,
         status=m.status,
-        existing_members_count=existing_count,
-        new_members_count=new_count,
+        existing_members_count=len(links),
+        new_members_count=0,
         participant_avatar_urls=avatars[:3],
         existing_preview_avatar_urls=existing_preview,
-        participant_member_ids=[ln.member_id for ln in links],
+        participant_member_ids=[ln.user_id for ln in links],
         participant_roster=roster,
     )
 
 
 def load_meeting_with_links(db: Session, meeting_id: str) -> Meeting | None:
-    from sqlalchemy import select
-
     stmt = (
         select(Meeting)
         .where(Meeting.id == meeting_id)
-        .options(
-            selectinload(Meeting.member_links).selectinload(MeetingMemberLink.member),
-        )
+        .options(selectinload(Meeting.participants).selectinload(MeetingParticipant.user))
     )
     return db.execute(stmt).unique().scalar_one_or_none()

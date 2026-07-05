@@ -47,6 +47,17 @@ class UserAccountListItem(BaseModel):
     full_name: str
     role: str
     avatar_url: str | None
+    has_voice_sample: bool = False
+    voice_duration_seconds: int | None = None
+    voice_file_path: str | None = Field(default=None, exclude=True)
+    voice_sample_url: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def _sync_voice_sample_url(self) -> "UserAccountListItem":
+        path = getattr(self, "voice_file_path", None)
+        if self.has_voice_sample and path:
+            self.voice_sample_url = path
+        return self

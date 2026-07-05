@@ -9,8 +9,10 @@ from api.deps import get_current_user
 from config.settings import UPLOAD_DIR
 from db.session import get_db
 from models.user import User
+from pipeline.speaker.backends import get_embedding_backend, serialize_embedding
 from schemas.common import PageMeta, PaginatedResponse
 from schemas.user import UserAccountListItem, UserMeOut, UserUpdateRequest
+from services.meeting_access import is_admin_user
 from services.pagination import run_paginated
 from services.storage import remove_file_if_exists, save_streaming_upload
 from utils.ids import new_id
@@ -31,7 +33,9 @@ def list_accounts(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     q: Annotated[str | None, Query(max_length=200)] = None,
 ) -> PaginatedResponse[UserAccountListItem]:
-    stmt = select(User).where(User.id != user.id).order_by(User.created_at.desc())
+    if not is_admin_user(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Admin only")
+    stmt = select(User).where(User.role != "admin").order_by(User.created_at.desc())
     if q and q.strip():
         term = f"%{q.strip()}%"
         stmt = stmt.where((User.full_name.ilike(term)) | (User.email.ilike(term)))
@@ -102,6 +106,12 @@ async def upload_my_voice(
     user.voice_file_path = rel
     user.has_voice_sample = True
     user.voice_duration_seconds = duration_seconds
+    try:
+        emb = get_embedding_backend().embed_enrollment(dest)
+        if emb is not None:
+            user.voice_embedding_json = serialize_embedding(emb)
+    except Exception:
+        pass
     db.add(user)
     db.commit()
     db.refresh(user)

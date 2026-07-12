@@ -51,6 +51,12 @@ class TranscriptSegmentDraft:
     match_score: float | None = None
     match_status: str = "matched"
     words: list[WordToken] = field(default_factory=list)
+    # Loudness of this segment on its own device (proximity proxy for cross-device dedup).
+    energy: float = 0.0
+    # energy normalised by the device's own peak, so mic-gain differences don't skew the pick.
+    rel_energy: float = 0.0
+    # Whisper's probability the segment is actually silence (used to drop hallucinations).
+    no_speech_prob: float | None = None
 
 
 @dataclass

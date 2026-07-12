@@ -7,7 +7,7 @@ import numpy as np
 
 from utils.ffmpeg_bin import ffmpeg_executable, probe_duration_sec
 
-__all__ = ["load_mono_wav", "probe_duration_sec", "slice_audio"]
+__all__ = ["load_mono_wav", "probe_duration_sec", "slice_audio", "segment_rms"]
 
 
 def load_mono_wav(path: Path, target_sr: int = 16000) -> tuple[np.ndarray, int]:
@@ -40,3 +40,11 @@ def slice_audio(audio: np.ndarray, sr: int, start_sec: float, end_sec: float) ->
     if e <= s:
         return np.zeros(0, dtype=np.float32)
     return audio[s:e]
+
+
+def segment_rms(audio: np.ndarray, sr: int, start_sec: float, end_sec: float) -> float:
+    """RMS loudness of one time span — a cheap proximity proxy for cross-device dedup."""
+    seg = slice_audio(audio, sr, start_sec, end_sec)
+    if seg.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(seg * seg) + 1e-12))

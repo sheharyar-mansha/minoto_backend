@@ -21,13 +21,12 @@ from pipeline import PIPELINE_VERSION
 from pipeline.align.gcc_phat import align_channels
 from pipeline.asr.backends import get_asr_backend
 from pipeline.assemble.timeline import assemble_timeline, format_merged_text
-from pipeline.audio_io import load_mono_wav, probe_duration_sec
+from pipeline.audio_io import load_mono_wav, probe_duration_sec, segment_rms
+from pipeline.merge.cross_device import merge_across_devices
 from pipeline.minutes.gemini_minutes import generate_minutes
-from pipeline.select.channel_selection import select_best_channels
 from pipeline.speaker.backends import deserialize_embedding, get_embedding_backend
 from pipeline.speaker.verify import SpeakerRef, verify_speaker
-from pipeline.types import ChannelRecording
-from pipeline.vad.energy_vad import energy_vad_regions
+from pipeline.types import ChannelRecording, TranscriptSegmentDraft
 from utils.ids import new_id
 
 log = logging.getLogger(__name__)
@@ -198,24 +197,7 @@ def _run_pipeline(
         if cid in channel_meta:
             channel_meta[cid].offset_sec += off
 
-    _set_stage(db, meeting.id, "selecting")
-    all_regions = []
-    for cid, (audio, sr) in channels.items():
-        meta = channel_meta[cid]
-        shifted = meta.offset_sec
-        regions = energy_vad_regions(
-            audio,
-            sr,
-            channel_id=cid,
-            uploader_user_id=meta.uploader_user_id,
-        )
-        for r in regions:
-            r.start_sec += shifted
-            r.end_sec += shifted
-        all_regions.extend(regions)
-
-    selected = select_best_channels(all_regions)
-
+    # Identity setup: who is in the meeting, plus any enrolled voice prints.
     participant_ids = {
         p.user_id
         for p in db.scalars(
@@ -242,41 +224,58 @@ def _run_pipeline(
 
     asr_backend = get_asr_backend()
 
-    _set_stage(db, meeting.id, "transcribing")
-    drafts = []
-    for region in selected:
-        meta = channel_meta[region.channel_id]
-        draft = asr_backend.transcribe_slice(
-            meta.path,
-            max(0.0, region.start_sec - meta.offset_sec),
-            max(0.1, region.end_sec - meta.offset_sec),
-            meta.recording_id,
-            meta.uploader_user_id,
-        )
-        if draft is None:
-            continue
-        draft.start_sec = region.start_sec
-        draft.end_sec = region.end_sec
-        draft.source_recording_id = meta.recording_id
-        draft.source_uploader_user_id = meta.uploader_user_id
+    # Bias the recogniser toward this meeting's own vocabulary (title + names) so
+    # proper nouns come out right.
+    name_list = ", ".join(sorted({n for n in labels.values() if n}))
+    prompt_bits: list[str] = []
+    if meeting.title:
+        prompt_bits.append(f"Meeting: {meeting.title}.")
+    if name_list:
+        prompt_bits.append(f"Participants: {name_list}.")
+    initial_prompt = " ".join(prompt_bits) or None
 
-        if speaker_matching and emb_backend is not None and (region.end_sec - region.start_sec) >= settings.SPEAKER_MATCH_MIN_SEGMENT_SEC:
+    # Transcribe each device's WHOLE recording once (context-aware = high accuracy),
+    # measure per-segment loudness for dedup, then shift onto the shared timeline.
+    _set_stage(db, meeting.id, "transcribing")
+    all_drafts: list[TranscriptSegmentDraft] = []
+    for cid, (audio, sr) in channels.items():
+        meta = channel_meta[cid]
+        segs = asr_backend.transcribe_file(
+            audio,
+            sr,
+            recording_id=meta.recording_id,
+            uploader_user_id=meta.uploader_user_id,
+            initial_prompt=initial_prompt,
+        )
+        for d in segs:
+            d.energy = segment_rms(audio, sr, d.start_sec, d.end_sec)
+            d.start_sec += meta.offset_sec
+            d.end_sec += meta.offset_sec
+        all_drafts.extend(segs)
+
+    # Collapse the same words captured by multiple phones into one line, keeping the
+    # nearest/clearest mic — whose owner is almost certainly the speaker.
+    drafts = merge_across_devices(all_drafts)
+
+    # Optionally confirm/relabel the speaker with enrolled voice prints (kept segments only).
+    if speaker_matching and emb_backend is not None and refs:
+        for d in drafts:
+            if (d.end_sec - d.start_sec) < settings.SPEAKER_MATCH_MIN_SEGMENT_SEC:
+                continue
+            meta = channel_meta.get(d.source_recording_id)
+            if meta is None:
+                continue
             seg_emb = emb_backend.embed_slice(
                 meta.path,
-                region.start_sec - meta.offset_sec,
-                region.end_sec - meta.offset_sec,
+                max(0.0, d.start_sec - meta.offset_sec),
+                max(0.1, d.end_sec - meta.offset_sec),
             )
-            if seg_emb is not None:
-                speaker_id, score, status_name = verify_speaker(refs, seg_emb, meta.uploader_user_id)
-                draft.speaker_user_id = speaker_id or meta.uploader_user_id
-                draft.match_score = score
-                draft.match_status = status_name
-            else:
-                draft.speaker_user_id = meta.uploader_user_id
-        else:
-            draft.speaker_user_id = meta.uploader_user_id
-
-        drafts.append(draft)
+            if seg_emb is None:
+                continue
+            speaker_id, score, status_name = verify_speaker(refs, seg_emb, d.source_uploader_user_id)
+            d.speaker_user_id = speaker_id or d.source_uploader_user_id
+            d.match_score = score
+            d.match_status = status_name
 
     _set_stage(db, meeting.id, "assembling")
     assembled = assemble_timeline(drafts)

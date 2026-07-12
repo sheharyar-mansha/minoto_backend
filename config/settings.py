@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     TRANSCRIBE_MODEL_SIZE: str = "small"
     TRANSCRIBE_DEVICE: str = "cpu"
     TRANSCRIBE_COMPUTE_TYPE: str = "int8"
+    # Decode quality. Language "en" stops Whisper re-detecting (and flipping) per chunk;
+    # set "" / "auto" to auto-detect. Beam search > greedy for accuracy.
+    TRANSCRIBE_LANGUAGE: str = "en"
+    TRANSCRIBE_BEAM_SIZE: int = 5
+    # Cross-device de-duplication: the same words are captured by every phone in the
+    # room. We keep the nearest/clearest mic and drop the echoes from the others.
+    DEDUP_MIN_TIME_IOU: float = 0.30      # min time overlap to even consider two lines "the same event"
+    DEDUP_HIGH_TIME_IOU: float = 0.60     # near-identical timing -> echo even if the far mic garbled the words
+    DEDUP_MIN_TEXT_SIM: float = 0.50      # word-overlap ratio that marks two lines as the same utterance
+    DEDUP_LOW_TEXT_SIM: float = 0.18      # below this the texts are different speech -> keep both (crosstalk)
     ENABLE_SPEAKER_MATCHING: bool = True
     SPEAKER_MATCH_MIN_SCORE: float = 0.32
     SPEAKER_MATCH_UPLOADER_MIN_SCORE: float = 0.18

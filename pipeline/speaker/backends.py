@@ -61,6 +61,11 @@ def normalize_embedding_vector(vec: np.ndarray | None, dim: int = EMBEDDING_DIM)
 
 class EmbeddingBackend(ABC):
     @abstractmethod
+    def embed_span(self, audio: np.ndarray, sr: int, start_sec: float, end_sec: float) -> np.ndarray | None:
+        """Embed a time span of an already-decoded waveform (no file re-read)."""
+        raise NotImplementedError
+
+    @abstractmethod
     def embed_slice(self, path: Path, start_sec: float, end_sec: float) -> np.ndarray | None:
         raise NotImplementedError
 
@@ -86,14 +91,17 @@ class PyannoteEmbeddingBackend(EmbeddingBackend):
             )
         return self._model
 
-    def embed_slice(self, path: Path, start_sec: float, end_sec: float) -> np.ndarray | None:
+    def embed_span(self, audio: np.ndarray, sr: int, start_sec: float, end_sec: float) -> np.ndarray | None:
         if end_sec - start_sec < settings.SPEAKER_MATCH_MIN_SEGMENT_SEC:
             return None
-        audio, sr = load_mono_wav(path)
         chunk = slice_audio(audio, sr, start_sec, end_sec)
         if len(chunk) < int(sr * 0.3):
             return None
         return self._embed_waveform(chunk, sr)
+
+    def embed_slice(self, path: Path, start_sec: float, end_sec: float) -> np.ndarray | None:
+        audio, sr = load_mono_wav(path)
+        return self.embed_span(audio, sr, start_sec, end_sec)
 
     def embed_enrollment(self, path: Path) -> np.ndarray | None:
         audio, sr = load_mono_wav(path)

@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-import numpy as np
 from sqlalchemy import delete, func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from config.settings import UPLOAD_DIR, settings
 from models.meeting import Meeting
@@ -18,7 +17,7 @@ from models.meeting_transcript import MeetingTranscript
 from models.meeting_transcript_segment import MeetingTranscriptSegment
 from models.user import User
 from pipeline import PIPELINE_VERSION
-from pipeline.align.gcc_phat import align_channels
+from pipeline.align.text_align import pick_reference, resolve_shared_offsets
 from pipeline.asr.backends import get_asr_backend
 from pipeline.assemble.timeline import assemble_timeline, format_merged_text
 from pipeline.audio_io import load_mono_wav, probe_duration_sec, segment_rms
@@ -159,7 +158,8 @@ def _run_pipeline(
         db.commit()
         return
 
-    channels: dict[str, tuple[np.ndarray, int]] = {}
+    # Resolve file paths + metadata only. Audio is decoded later, one device at a
+    # time, so we never hold every recording's samples in RAM at once.
     channel_meta: dict[str, ChannelRecording] = {}
     ref_id = recs[0].id
 
@@ -167,35 +167,23 @@ def _run_pipeline(
         path = _resolve_path(rec.file_path)
         if path is None:
             continue
-        dur = rec.duration_seconds or probe_duration_sec(path) or 0.0
-        audio, sr = load_mono_wav(path)
-        if len(audio) == 0:
-            continue
-        channels[rec.id] = (audio, sr)
-        offset = 0.0
-        if rec.recording_started_at and meeting.conducted_at and final_elapsed_seconds:
-            meeting_start = conducted_at - timedelta(seconds=final_elapsed_seconds)
-            offset = max(0.0, (rec.recording_started_at - meeting_start).total_seconds())
         channel_meta[rec.id] = ChannelRecording(
             recording_id=rec.id,
             uploader_user_id=rec.uploader_user_id,
             path=path,
-            duration_sec=dur or len(audio) / sr,
-            offset_sec=offset,
+            duration_sec=rec.duration_seconds or probe_duration_sec(path) or 0.0,
+            offset_sec=0.0,
+            recording_started_at=(
+                rec.recording_started_at.timestamp() if rec.recording_started_at else None
+            ),
         )
 
-    if not channels:
+    if not channel_meta:
         tx.status = "failed"
         tx.pipeline_stage = "failed"
-        tx.error_message = "Could not decode any recordings."
+        tx.error_message = "No recording files could be located."
         db.commit()
         return
-
-    _set_stage(db, meeting.id, "aligning")
-    offsets = align_channels(channels, ref_id)
-    for cid, off in offsets.items():
-        if cid in channel_meta:
-            channel_meta[cid].offset_sec += off
 
     # Identity setup: who is in the meeting, plus any enrolled voice prints.
     participant_ids = {
@@ -234,12 +222,25 @@ def _run_pipeline(
         prompt_bits.append(f"Participants: {name_list}.")
     initial_prompt = " ".join(prompt_bits) or None
 
-    # Transcribe each device's WHOLE recording once (context-aware = high accuracy),
-    # measure per-segment loudness for dedup, then shift onto the shared timeline.
+    # 1) Transcribe each device's WHOLE recording once, in its own LOCAL time
+    #    (context-aware = high accuracy). Load one recording at a time and free it
+    #    right after, so peak memory stays ~one recording, not all of them at once.
     _set_stage(db, meeting.id, "transcribing")
-    all_drafts: list[TranscriptSegmentDraft] = []
-    for cid, (audio, sr) in channels.items():
-        meta = channel_meta[cid]
+    per_device: dict[str, list[TranscriptSegmentDraft]] = {}
+    decoded_any = False
+    for cid, meta in channel_meta.items():
+        try:
+            audio, sr = load_mono_wav(meta.path)
+        except Exception as exc:
+            log.warning("Decode failed for recording=%s: %s", cid, exc)
+            per_device[cid] = []
+            continue
+        if len(audio) == 0:
+            per_device[cid] = []
+            continue
+        decoded_any = True
+        if not meta.duration_sec:
+            meta.duration_sec = len(audio) / sr
         segs = asr_backend.transcribe_file(
             audio,
             sr,
@@ -249,33 +250,75 @@ def _run_pipeline(
         )
         for d in segs:
             d.energy = segment_rms(audio, sr, d.start_sec, d.end_sec)
-            d.start_sec += meta.offset_sec
-            d.end_sec += meta.offset_sec
+        per_device[cid] = segs
+        del audio  # release this recording's samples before loading the next
+
+    if not decoded_any:
+        tx.status = "failed"
+        tx.pipeline_stage = "failed"
+        tx.error_message = "Could not decode any recordings."
+        db.commit()
+        return
+
+    # 2) Put every device on ONE timeline. Phones share no clock, so align on the
+    #    WORDS they both captured (robust for near-field mics); fall back to device
+    #    start-time deltas when there isn't enough shared speech.
+    _set_stage(db, meeting.id, "aligning")
+    ref_id = pick_reference(per_device) or ref_id
+    # local->shared offset per device (shared-word alignment, else start-time delta).
+    offsets = resolve_shared_offsets(
+        per_device,
+        {cid: channel_meta[cid].recording_started_at for cid in per_device},
+        ref_id,
+    )
+    all_drafts: list[TranscriptSegmentDraft] = []
+    for cid, segs in per_device.items():
+        channel_meta[cid].offset_sec = offsets[cid]  # speaker matching converts back to local time
+        off = offsets[cid]
+        for d in segs:
+            d.start_sec = d.start_sec + off
+            d.end_sec = max(d.start_sec, d.end_sec + off)
         all_drafts.extend(segs)
 
-    # Collapse the same words captured by multiple phones into one line, keeping the
-    # nearest/clearest mic — whose owner is almost certainly the speaker.
+    # 3) Collapse the same words captured by multiple phones into one line, keeping
+    #    the nearest/clearest mic — whose owner is almost certainly the speaker.
     drafts = merge_across_devices(all_drafts)
 
-    # Optionally confirm/relabel the speaker with enrolled voice prints (kept segments only).
+    # Optionally confirm/relabel speakers with enrolled voice prints. Group kept
+    # segments by device so each recording is decoded ONCE (not once per segment),
+    # and only one recording is held in memory at a time.
     if speaker_matching and emb_backend is not None and refs:
+        by_device: dict[str, list[TranscriptSegmentDraft]] = {}
         for d in drafts:
-            if (d.end_sec - d.start_sec) < settings.SPEAKER_MATCH_MIN_SEGMENT_SEC:
-                continue
-            meta = channel_meta.get(d.source_recording_id)
+            by_device.setdefault(d.source_recording_id, []).append(d)
+        for cid, segs in by_device.items():
+            meta = channel_meta.get(cid)
             if meta is None:
                 continue
-            seg_emb = emb_backend.embed_slice(
-                meta.path,
-                max(0.0, d.start_sec - meta.offset_sec),
-                max(0.1, d.end_sec - meta.offset_sec),
-            )
-            if seg_emb is None:
+            long_enough = [
+                d for d in segs
+                if (d.end_sec - d.start_sec) >= settings.SPEAKER_MATCH_MIN_SEGMENT_SEC
+            ]
+            if not long_enough:
                 continue
-            speaker_id, score, status_name = verify_speaker(refs, seg_emb, d.source_uploader_user_id)
-            d.speaker_user_id = speaker_id or d.source_uploader_user_id
-            d.match_score = score
-            d.match_status = status_name
+            try:
+                audio, sr = load_mono_wav(meta.path)
+            except Exception:
+                continue
+            for d in long_enough:
+                seg_emb = emb_backend.embed_span(
+                    audio,
+                    sr,
+                    max(0.0, d.start_sec - meta.offset_sec),
+                    max(0.1, d.end_sec - meta.offset_sec),
+                )
+                if seg_emb is None:
+                    continue
+                speaker_id, score, status_name = verify_speaker(refs, seg_emb, d.source_uploader_user_id)
+                d.speaker_user_id = speaker_id or d.source_uploader_user_id
+                d.match_score = score
+                d.match_status = status_name
+            del audio
 
     _set_stage(db, meeting.id, "assembling")
     assembled = assemble_timeline(drafts)
@@ -328,8 +371,8 @@ def _run_pipeline(
                 matched_user_id=seg.speaker_user_id if seg.match_status == "matched" else None,
                 match_score=_as_py_float(seg.match_score),
                 match_status=seg.match_status,
-                start_sec=_as_py_float(seg.start_sec) or 0.0,
-                end_sec=_as_py_float(seg.end_sec) or 0.0,
+                start_sec=max(0.0, _as_py_float(seg.start_sec) or 0.0),
+                end_sec=max(0.0, _as_py_float(seg.end_sec) or 0.0),
                 text=seg.text,
                 confidence=_as_py_float(seg.confidence),
                 word_timestamps_json=json.dumps(

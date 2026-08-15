@@ -15,24 +15,6 @@ class ChannelRecording:
 
 
 @dataclass
-class SpeechRegion:
-    channel_id: str
-    uploader_user_id: str
-    start_sec: float
-    end_sec: float
-    energy: float = 0.0
-
-
-@dataclass
-class SelectedRegion:
-    channel_id: str
-    uploader_user_id: str
-    start_sec: float
-    end_sec: float
-    score: float
-
-
-@dataclass
 class WordToken:
     word: str
     start: float

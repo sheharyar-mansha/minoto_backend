@@ -36,9 +36,16 @@ class Settings(BaseSettings):
     # set "" / "auto" to auto-detect. Beam search > greedy for accuracy.
     TRANSCRIBE_LANGUAGE: str = "en"
     TRANSCRIBE_BEAM_SIZE: int = 5
+    # Cross-device time alignment: independent phones share no clock, and waveform
+    # correlation fails for near-field mics, so we align on the WORDS the phones both
+    # captured (see pipeline/align/text_align.py).
+    ALIGN_MIN_ANCHOR_SIM: float = 0.60    # word-overlap for a phrase to count as a shared anchor
+    ALIGN_MIN_ANCHOR_WORDS: int = 3       # ignore tiny phrases ("hi", "okay") as anchors
+    ALIGN_MIN_ANCHORS: int = 2            # need this many phrase matches before trusting the offset
+    ALIGN_INLIER_BAND_SEC: float = 1.0    # keep anchor deltas within this band of the median (reject outliers)
     # Cross-device de-duplication: the same words are captured by every phone in the
     # room. We keep the nearest/clearest mic and drop the echoes from the others.
-    DEDUP_MIN_TIME_IOU: float = 0.30      # min time overlap to even consider two lines "the same event"
+    DEDUP_TIME_SLACK_SEC: float = 0.75    # treat segments within this gap as overlapping (absorbs residual drift)
     DEDUP_HIGH_TIME_IOU: float = 0.60     # near-identical timing -> echo even if the far mic garbled the words
     DEDUP_MIN_TEXT_SIM: float = 0.50      # word-overlap ratio that marks two lines as the same utterance
     DEDUP_LOW_TEXT_SIM: float = 0.18      # below this the texts are different speech -> keep both (crosstalk)

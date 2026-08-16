@@ -16,6 +16,9 @@ def generate_minutes(
     labels: dict[str, str],
     meeting_title: str,
 ) -> MinutesDraft:
+    # No speech -> empty minutes, without spending a network call on nothing.
+    if not segments or not any(seg.text.strip() for seg in segments):
+        return MinutesDraft(summary="", decisions=[], action_items=[])
     if not settings.GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is not set — cannot generate structured minutes.")
 

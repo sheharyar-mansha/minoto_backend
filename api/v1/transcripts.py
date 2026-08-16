@@ -77,8 +77,9 @@ def get_meeting_transcript(
         minutes=minutes,
         segments=[
             MeetingTranscriptSegmentOut(
-                start_sec=float(r.start_sec),
-                end_sec=float(r.end_sec),
+                # Cross-device clock sync can produce slightly negative times; clamp for API.
+                start_sec=max(0.0, float(r.start_sec)),
+                end_sec=max(0.0, float(r.end_sec)),
                 speaker_user_id=r.matched_user_id or r.uploader_user_id,
                 speaker_label=(
                     "Unknown"

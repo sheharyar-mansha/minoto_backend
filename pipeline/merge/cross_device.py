@@ -49,6 +49,17 @@ def _time_iou(a: TranscriptSegmentDraft, b: TranscriptSegmentDraft) -> float:
     return inter / union if union > 0.0 else 0.0
 
 
+def _time_close(a: TranscriptSegmentDraft, b: TranscriptSegmentDraft, slack: float) -> bool:
+    """Overlapping, or separated by no more than `slack` seconds.
+
+    Alignment across independent phones is never perfect, so we can't demand exact
+    overlap — a small gap still means "the same moment". `gap` is negative when the
+    two segments actually overlap.
+    """
+    gap = max(a.start_sec, b.start_sec) - min(a.end_sec, b.end_sec)
+    return gap <= slack
+
+
 def _assign_relative_energy(drafts: list[TranscriptSegmentDraft]) -> None:
     """Normalise each segment's loudness by its own device's peak.
 
@@ -74,15 +85,15 @@ def _ownership_score(d: TranscriptSegmentDraft) -> float:
 def _is_echo(cand: TranscriptSegmentDraft, kept: TranscriptSegmentDraft) -> bool:
     if cand.source_recording_id == kept.source_recording_id:
         return False  # never dedup two segments from the same phone
-    iou = _time_iou(cand, kept)
-    if iou < settings.DEDUP_MIN_TIME_IOU:
+    # Same moment in time (allowing for imperfect cross-device alignment)?
+    if not _time_close(cand, kept, settings.DEDUP_TIME_SLACK_SEC):
         return False
     sim = _text_similarity(cand.text, kept.text)
     if sim >= settings.DEDUP_MIN_TEXT_SIM:
-        return True  # same time, same words -> clearly the same utterance
+        return True  # same moment, same words -> clearly the same utterance
     # Near-identical timing but the far mic garbled the words: still an echo,
     # as long as the texts aren't outright different (which would be crosstalk).
-    if iou >= settings.DEDUP_HIGH_TIME_IOU and sim >= settings.DEDUP_LOW_TEXT_SIM:
+    if _time_iou(cand, kept) >= settings.DEDUP_HIGH_TIME_IOU and sim >= settings.DEDUP_LOW_TEXT_SIM:
         return True
     return False
 

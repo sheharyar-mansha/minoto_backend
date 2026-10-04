@@ -43,7 +43,7 @@ def slice_audio(audio: np.ndarray, sr: int, start_sec: float, end_sec: float) ->
 
 
 def segment_rms(audio: np.ndarray, sr: int, start_sec: float, end_sec: float) -> float:
-    """RMS loudness of one time span — a cheap proximity proxy for cross-device dedup."""
+    """RMS loudness of one time span."""
     seg = slice_audio(audio, sr, start_sec, end_sec)
     if seg.size == 0:
         return 0.0

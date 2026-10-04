@@ -66,6 +66,11 @@ class EmbeddingBackend(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def embed_waveform(self, waveform: np.ndarray, sr: int) -> np.ndarray | None:
+        """Embed an already-assembled waveform (e.g. a cluster's pooled speech)."""
+        raise NotImplementedError
+
+    @abstractmethod
     def embed_slice(self, path: Path, start_sec: float, end_sec: float) -> np.ndarray | None:
         raise NotImplementedError
 
@@ -82,12 +87,16 @@ class PyannoteEmbeddingBackend(EmbeddingBackend):
         if self._model is None:
             if not settings.PYANNOTE_AUTH_TOKEN:
                 raise RuntimeError("PYANNOTE_AUTH_TOKEN is required for speaker matching.")
+            import torch
             from pyannote.audio import Inference
+
+            from pipeline.device import pyannote_torch_device
 
             self._model = Inference(
                 settings.PYANNOTE_EMBEDDING_MODEL,
                 use_auth_token=settings.PYANNOTE_AUTH_TOKEN,
                 window="whole",
+                device=torch.device(pyannote_torch_device()),  # GPU/MPS when available
             )
         return self._model
 
@@ -98,6 +107,10 @@ class PyannoteEmbeddingBackend(EmbeddingBackend):
         if len(chunk) < int(sr * 0.3):
             return None
         return self._embed_waveform(chunk, sr)
+
+    def embed_waveform(self, waveform: np.ndarray, sr: int) -> np.ndarray | None:
+        """Embed a pre-assembled waveform span (used for cluster pooling)."""
+        return self._embed_waveform(waveform, sr)
 
     def embed_slice(self, path: Path, start_sec: float, end_sec: float) -> np.ndarray | None:
         audio, sr = load_mono_wav(path)
@@ -127,11 +140,7 @@ class PyannoteEmbeddingBackend(EmbeddingBackend):
 
 @lru_cache(maxsize=1)
 def get_embedding_backend() -> EmbeddingBackend:
-    backend = (settings.EMBEDDING_BACKEND or "pyannote").strip().lower()
-    if backend != "pyannote":
-        raise ValueError(
-            f"Unsupported EMBEDDING_BACKEND={backend!r}. Only pyannote is implemented."
-        )
+    # Single-device build: pyannote is the only embedding backend.
     return PyannoteEmbeddingBackend()
 
 

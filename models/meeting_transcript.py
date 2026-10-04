@@ -7,7 +7,7 @@ from db.base import Base
 
 
 class MeetingTranscript(Base):
-    """Final merged transcript generation state for one meeting."""
+    """Transcript generation state + results for one meeting."""
 
     __tablename__ = "meeting_transcripts"
 
@@ -18,7 +18,7 @@ class MeetingTranscript(Base):
     pipeline_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     pipeline_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
     merged_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    minutes_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    minutes_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # Gemini output
     error_message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

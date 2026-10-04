@@ -42,12 +42,13 @@ def get_current_user(
     return user
 
 
-def get_meeting_for_user(
+def get_meeting_or_404(
     meeting_id: str,
     db: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> Meeting:
+    """Single-owner app: any authenticated owner may access any meeting."""
     m = db.get(Meeting, meeting_id)
-    if m is None or m.user_id != user.id:
+    if m is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Meeting not found")
     return m

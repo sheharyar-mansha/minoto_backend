@@ -1,13 +1,19 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
 
 
 class MeetingTranscriptSegment(Base):
-    """One transcript segment aligned to meeting timeline and speaker identity."""
+    """One attributed line of the transcript.
+
+    Each segment is matched (by voice) to an enrolled `Contact`. The label shown
+    in the app is in `label_name`; the mobile app renders it RED when the name is
+    a roster fallback (`name_source == 'fallback'`) or the speaker could not be
+    confidently identified (`match_status == 'unknown'`).
+    """
 
     __tablename__ = "meeting_transcript_segments"
     __table_args__ = (
@@ -18,18 +24,17 @@ class MeetingTranscriptSegment(Base):
     meeting_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("meetings.id", ondelete="CASCADE"), index=True
     )
-    uploader_user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    matched_contact_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    source_uploader_user_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
-    )
-    source_recording_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    matched_user_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
-    )
+
+    label_name: Mapped[str] = mapped_column(String(255))  # rendered speaker name
+    name_source: Mapped[str] = mapped_column(String(16), default="spoken")  # 'spoken' | 'fallback'
+    match_status: Mapped[str] = mapped_column(String(16), default="matched")  # 'matched' | 'unknown'
     match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    match_status: Mapped[str] = mapped_column(String(32), default="matched")
+    candidate_contact_ids: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON top-2
+    is_overlap: Mapped[bool] = mapped_column(Boolean, default=False)
+
     start_sec: Mapped[float] = mapped_column(Float, default=0)
     end_sec: Mapped[float] = mapped_column(Float, default=0)
     text: Mapped[str] = mapped_column(Text)
@@ -37,7 +42,5 @@ class MeetingTranscriptSegment(Base):
     word_timestamps_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
-    meeting = relationship("Meeting")
-    uploader = relationship("User", foreign_keys=[uploader_user_id])
-    source_uploader = relationship("User", foreign_keys=[source_uploader_user_id])
-    matched_user = relationship("User", foreign_keys=[matched_user_id])
+    meeting = relationship("Meeting", back_populates="segments")
+    matched_contact = relationship("Contact")

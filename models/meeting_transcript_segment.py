@@ -35,6 +35,14 @@ class MeetingTranscriptSegment(Base):
     candidate_contact_ids: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON top-2
     is_overlap: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Spoken "expunge" commands (see pipeline.expunge):
+    #   is_command  — this utterance IS the command (e.g. "expunge my last
+    #                 statement"); hidden from the transcript and the minutes.
+    #   is_expunged — a statement a command redacted; kept and shown (blue) but
+    #                 excluded from the AI minutes.
+    is_command: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_expunged: Mapped[bool] = mapped_column(Boolean, default=False)
+
     start_sec: Mapped[float] = mapped_column(Float, default=0)
     end_sec: Mapped[float] = mapped_column(Float, default=0)
     text: Mapped[str] = mapped_column(Text)

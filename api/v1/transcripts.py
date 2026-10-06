@@ -62,6 +62,8 @@ def get_meeting_transcript(
         merged_text=t.merged_text,
         error_message=t.error_message,
         minutes=_parse_minutes(t.minutes_json),
+        # Command utterances ("expunge …") are hidden; expunged statements are
+        # returned (flagged) so the app can render them blue.
         segments=[
             MeetingTranscriptSegmentOut(
                 start_sec=max(0.0, float(r.start_sec)),
@@ -74,8 +76,10 @@ def get_meeting_transcript(
                 match_status=r.match_status,
                 match_score=r.match_score,
                 is_overlap=bool(r.is_overlap),
+                is_expunged=bool(r.is_expunged),
             )
             for r in rows
+            if not r.is_command
         ],
     )
 

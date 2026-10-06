@@ -14,6 +14,7 @@ class MeetingTranscriptSegmentOut(BaseModel):
     match_status: str  # 'matched' | 'unknown'
     match_score: float | None = None
     is_overlap: bool = False
+    is_expunged: bool = False  # redacted by a spoken command — app renders it blue
 
 
 class MeetingMinutesOut(BaseModel):

@@ -38,6 +38,7 @@ from pipeline.assemble import (
     format_merged_text,
     group_words_into_segments,
 )
+from pipeline.expunge import apply_expunge_commands
 from utils.ids import new_id
 
 log = logging.getLogger(__name__)
@@ -206,7 +207,9 @@ def _run_pipeline(db: Session, meeting: Meeting, tx: MeetingTranscript) -> None:
         db, meeting, grouped, cluster_assignment, contacts_by_id, label_fallback
     )
 
-    tx.merged_text = format_merged_text(persisted)
+    # Command utterances ("expunge …") are control, not content — keep them out of
+    # the plain-text record. Expunged statements stay (the app shows them blue).
+    tx.merged_text = format_merged_text([p for p in persisted if not p["is_command"]])
     db.commit()
 
     # --- Minutes ------------------------------------------------------------
@@ -236,31 +239,32 @@ def _run_asr_only(
     words = assign_words_to_turns(flatten_words(asr_segments), [])  # no turns
     grouped = group_words_into_segments(words)
 
-    persisted: list[dict] = []
-    for seg in grouped:
-        if not seg["text"].strip():
-            continue
-        row = MeetingTranscriptSegment(
-            id=new_id(),
-            meeting_id=meeting.id,
-            matched_contact_id=None,
-            label_name="Speaker 1",
-            name_source="fallback",
-            match_status="unknown",
-            match_score=None,
-            candidate_contact_ids=None,
-            is_overlap=False,
-            start_sec=seg["start"],
-            end_sec=seg["end"],
-            text=seg["text"],
-            confidence=seg["confidence"],
-            word_timestamps_json=_dump_words(seg["words"]),
-        )
-        db.add(row)
-        persisted.append({"start": seg["start"], "label_name": "Speaker 1", "text": seg["text"]})
-    db.commit()
+    # One unknown speaker (label None). "expunge my last statement" still resolves
+    # (same speaker); "expunge last statement of <name>" finds no match and no-ops.
+    resolved: list[dict] = [
+        {
+            "speaker_label": None,
+            "names": [],
+            "text": seg["text"].strip(),
+            "label_name": "Speaker 1",
+            "name_source": "fallback",
+            "match_status": "unknown",
+            "contact_id": None,
+            "score": None,
+            "candidates": [],
+            "start": seg["start"],
+            "end": seg["end"],
+            "confidence": seg["confidence"],
+            "is_overlap": False,
+            "words": seg["words"],
+        }
+        for seg in grouped
+        if seg["text"].strip()
+    ]
+    apply_expunge_commands(resolved)
+    persisted = _persist_resolved(db, meeting, resolved)
 
-    tx.merged_text = format_merged_text(persisted)
+    tx.merged_text = format_merged_text([p for p in persisted if not p["is_command"]])
     db.commit()
 
     _generate_minutes(db, meeting, tx, persisted)
@@ -306,7 +310,8 @@ def _persist_segments(
     contacts_by_id: dict,
     label_fallback: dict[str, str],
 ) -> list[dict]:
-    persisted: list[dict] = []
+    # 1. Resolve each segment's speaker identity + display name.
+    resolved: list[dict] = []
     for seg in grouped:
         text = seg["text"].strip()
         if not text:
@@ -317,6 +322,7 @@ def _persist_segments(
         score = assignment.get("score")
         candidates = assignment.get("candidates") or []
 
+        names: list[str] = []
         if contact_id and contact_id in contacts_by_id:
             contact = contacts_by_id[contact_id]
             if contact.spoken_name:
@@ -324,30 +330,72 @@ def _persist_segments(
             else:
                 label_name, name_source = contact.name, "fallback"
             match_status = "matched"
+            names = [contact.spoken_name or "", contact.name or ""]
         else:
             label_name = label_fallback.get(label, "Speaker 1")
             name_source = "fallback"
             match_status = "unknown"
             contact_id = None
 
+        resolved.append(
+            {
+                "speaker_label": label,
+                "names": names,
+                "text": text,
+                "label_name": label_name,
+                "name_source": name_source,
+                "match_status": match_status,
+                "contact_id": contact_id,
+                "score": score,
+                "candidates": candidates,
+                "start": seg["start"],
+                "end": seg["end"],
+                "confidence": seg["confidence"],
+                "is_overlap": bool(seg["is_overlap"]),
+                "words": seg["words"],
+            }
+        )
+
+    # 2. Detect + apply spoken expunge commands (annotates is_command/is_expunged).
+    apply_expunge_commands(resolved)
+
+    # 3. Persist rows and return the lightweight list for merged-text/minutes.
+    return _persist_resolved(db, meeting, resolved)
+
+
+def _persist_resolved(db: Session, meeting: Meeting, resolved: list[dict]) -> list[dict]:
+    """Write resolved+annotated segments and return {start,label_name,text,flags}."""
+    persisted: list[dict] = []
+    for seg in resolved:
+        candidates = seg.get("candidates") or []
         row = MeetingTranscriptSegment(
             id=new_id(),
             meeting_id=meeting.id,
-            matched_contact_id=contact_id,
-            label_name=label_name,
-            name_source=name_source,
-            match_status=match_status,
-            match_score=score,
+            matched_contact_id=seg.get("contact_id"),
+            label_name=seg["label_name"],
+            name_source=seg["name_source"],
+            match_status=seg["match_status"],
+            match_score=seg.get("score"),
             candidate_contact_ids=(json.dumps(candidates) if candidates else None),
-            is_overlap=bool(seg["is_overlap"]),
+            is_overlap=bool(seg.get("is_overlap")),
+            is_command=bool(seg.get("is_command")),
+            is_expunged=bool(seg.get("is_expunged")),
             start_sec=seg["start"],
             end_sec=seg["end"],
-            text=text,
-            confidence=seg["confidence"],
-            word_timestamps_json=_dump_words(seg["words"]),
+            text=seg["text"],
+            confidence=seg.get("confidence"),
+            word_timestamps_json=_dump_words(seg.get("words") or []),
         )
         db.add(row)
-        persisted.append({"start": seg["start"], "label_name": label_name, "text": text})
+        persisted.append(
+            {
+                "start": seg["start"],
+                "label_name": seg["label_name"],
+                "text": seg["text"],
+                "is_command": bool(seg.get("is_command")),
+                "is_expunged": bool(seg.get("is_expunged")),
+            }
+        )
     db.commit()
     return persisted
 
@@ -360,7 +408,11 @@ def _dump_words(words: list[dict]) -> str | None:
 
 
 def _generate_minutes(db: Session, meeting: Meeting, tx: MeetingTranscript, persisted: list[dict]) -> None:
-    """Non-fatal structured minutes via Gemini; skipped without a key."""
+    """Non-fatal structured minutes via Gemini; skipped without a key.
+
+    Expunged statements and the command utterances themselves are excluded — the
+    whole point of expunging is to keep that content out of the official minutes.
+    """
     if not persisted:
         return
     tx.pipeline_stage = "minutes"
@@ -368,10 +420,14 @@ def _generate_minutes(db: Session, meeting: Meeting, tx: MeetingTranscript, pers
     if not settings.GEMINI_API_KEY:
         log.info("GEMINI_API_KEY not set — skipping minutes for meeting=%s.", meeting.id)
         return
+    usable = [p for p in persisted if not p.get("is_command") and not p.get("is_expunged")]
+    if not usable:
+        log.info("All content expunged/command-only for meeting=%s — no minutes.", meeting.id)
+        return
     try:
         from pipeline.minutes.gemini_minutes import generate_minutes
 
-        segs = [_MinutesSeg(text=p["text"], speaker_name=p["label_name"]) for p in persisted]
+        segs = [_MinutesSeg(text=p["text"], speaker_name=p["label_name"]) for p in usable]
         draft = generate_minutes(segs, meeting.title)
         tx.minutes_json = json.dumps(dataclasses.asdict(draft))
         db.commit()

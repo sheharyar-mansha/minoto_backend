@@ -2,30 +2,38 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
+from schemas.member import MemberListItem
 
-class ParticipantPreviewOut(BaseModel):
-    member_id: str
-    name: str
-    avatar_url: str | None = None
-    is_new_for_meeting: bool = False
+# Accepts "HH:MM" or "HH:MM:SS"; stored as "HH:MM:SS".
+_TIME_PATTERN = r"^\d{2}:\d{2}(:\d{2})?$"
 
 
 class MeetingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     meeting_date: date
-    start_time: str = Field(pattern=r"^\d{2}:\d{2}$", description="HH:MM 24h")
+    start_time: str = Field(pattern=_TIME_PATTERN, description="HH:MM or HH:MM:SS (24h)")
     duration_minutes: int = Field(ge=1, le=24 * 60)
-    status: str = Field(default="scheduled", pattern="^(draft|scheduled|in_progress|completed|cancelled)$")
+    member_ids: list[str] = Field(default_factory=list)
 
 
 class MeetingUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=500)
     meeting_date: date | None = None
-    start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    start_time: str | None = Field(default=None, pattern=_TIME_PATTERN)
     duration_minutes: int | None = Field(default=None, ge=1, le=24 * 60)
-    status: str | None = Field(
-        default=None, pattern="^(draft|scheduled|in_progress|completed|cancelled)$"
-    )
+
+
+class MeetingMembersPut(BaseModel):
+    """Replace a meeting's roster with these contact ids."""
+
+    member_ids: list[str] = Field(default_factory=list)
+
+
+class ContactPreview(BaseModel):
+    id: str
+    name: str
+
+    model_config = {"from_attributes": True}
 
 
 class MeetingListItemOut(BaseModel):
@@ -34,43 +42,39 @@ class MeetingListItemOut(BaseModel):
     date_label: str
     duration_label: str
     meeting_date: date
+    start_time: str
     duration_minutes: int
+    scheduled_at: datetime
     status: str
-    participant_count: int = 0
-    participant_preview: list[ParticipantPreviewOut] = Field(default_factory=list)
+    contact_count: int = 0
+    contact_preview: list[ContactPreview] = Field(default_factory=list)
 
 
 class MeetingDetailOut(BaseModel):
     id: str
     title: str
-    date_display: str
-    start_time: str
-    duration_display: str
+    date_label: str
+    duration_label: str
     meeting_date: date
+    start_time: str
     duration_minutes: int
+    scheduled_at: datetime
     status: str
-    existing_members_count: int
-    new_members_count: int
-    participant_avatar_urls: list[str | None]
-    existing_preview_avatar_urls: list[str | None] = Field(
-        default_factory=list,
-        description="Existing members only; up to 3 random slots; length = min(3, existing_members_count).",
-    )
-    participant_member_ids: list[str]
-    participant_roster: list[ParticipantPreviewOut] = Field(
-        default_factory=list,
-        description="All meeting participants with display fields for clients.",
-    )
+    conducted_at: datetime | None = None
+    final_elapsed_seconds: int | None = None
+    has_recording: bool = False
+    contact_count: int = 0
+    members: list[MemberListItem] = Field(default_factory=list)
 
 
-class MeetingParticipantsPut(BaseModel):
-    """Replace meeting roster with participant user ids."""
+class MeetingStartCheckOut(BaseModel):
+    ready: bool
+    members_with_voice: list[MemberListItem] = Field(default_factory=list)
+    members_without_voice: list[MemberListItem] = Field(default_factory=list)
 
-    member_ids: list[str] = Field(default_factory=list)
-    user_ids: list[str] = Field(default_factory=list)
 
-    def resolved_user_ids(self) -> list[str]:
-        return self.user_ids if self.user_ids else self.member_ids
+class MeetingCompleteRequest(BaseModel):
+    final_elapsed_seconds: int | None = Field(default=None, ge=0)
 
 
 class MeetingCompleteResponse(BaseModel):
@@ -78,5 +82,3 @@ class MeetingCompleteResponse(BaseModel):
     status: str
     conducted_at: datetime
     final_elapsed_seconds: int | None = None
-    target_seconds: int | None = None
-    overtime_seconds: int | None = None

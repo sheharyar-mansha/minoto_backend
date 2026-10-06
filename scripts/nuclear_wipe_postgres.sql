@@ -1,8 +1,7 @@
 -- OPTIONAL one-way wipe for PostgreSQL (run manually in pgAdmin or psql).
 -- Irreversible. Does not delete files under backend/uploads/.
 --
--- After this, stamp and rebuild:
---   python -m alembic stamp base
+-- After this, just rebuild (the DROP removes alembic_version, so no stamp needed):
 --   python -m alembic upgrade head
 
 DROP SCHEMA public CASCADE;

@@ -1,84 +1,65 @@
-import random
+"""Shape Meeting ORM rows into API response schemas."""
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from models.meeting import Meeting
-from models.meeting_participant import MeetingParticipant
-from models.user import User
-from schemas.meeting import MeetingDetailOut, MeetingListItemOut, ParticipantPreviewOut
+from schemas.meeting import (
+    ContactPreview,
+    MeetingDetailOut,
+    MeetingListItemOut,
+)
+from schemas.member import MemberListItem
 from utils.formatting import date_label, duration_label
+
+_PREVIEW_LIMIT = 3
+
+
+def load_meeting_with_contacts(db: Session, meeting_id: str) -> Meeting | None:
+    """Load a meeting with its contacts and recording eagerly."""
+    stmt = (
+        select(Meeting)
+        .where(Meeting.id == meeting_id)
+        .options(
+            selectinload(Meeting.contacts),
+            selectinload(Meeting.recording),
+        )
+    )
+    return db.execute(stmt).unique().scalar_one_or_none()
 
 
 def meeting_list_item(m: Meeting) -> MeetingListItemOut:
-    links = list(m.participants)
-    preview: list[ParticipantPreviewOut] = []
-    for ln in links[:3]:
-        user = ln.user
-        preview.append(
-            ParticipantPreviewOut(
-                member_id=ln.user_id,
-                name=user.full_name,
-                avatar_url=user.avatar_url,
-                is_new_for_meeting=False,
-            )
-        )
+    contacts = list(m.contacts)
     return MeetingListItemOut(
         id=m.id,
         title=m.title,
         date_label=date_label(m.meeting_date),
         duration_label=duration_label(m.duration_minutes),
         meeting_date=m.meeting_date,
+        start_time=m.start_time,
         duration_minutes=m.duration_minutes,
+        scheduled_at=m.scheduled_at,
         status=m.status,
-        participant_count=len(links),
-        participant_preview=preview,
+        contact_count=len(contacts),
+        contact_preview=[ContactPreview.model_validate(c) for c in contacts[:_PREVIEW_LIMIT]],
     )
 
 
 def meeting_detail(m: Meeting) -> MeetingDetailOut:
-    links = list(m.participants)
-    avatars: list[str | None] = []
-    for ln in links[:3]:
-        avatars.append(ln.user.avatar_url)
-    while len(avatars) < 3:
-        avatars.append(None)
-
-    existing_preview = [ln.user.avatar_url for ln in links[: min(3, len(links))]]
-    random.shuffle(existing_preview)
-
-    roster = [
-        ParticipantPreviewOut(
-            member_id=ln.user_id,
-            name=ln.user.full_name,
-            avatar_url=ln.user.avatar_url,
-            is_new_for_meeting=False,
-        )
-        for ln in links
-    ]
-
+    contacts = list(m.contacts)
     return MeetingDetailOut(
         id=m.id,
         title=m.title,
-        date_display=date_label(m.meeting_date),
-        start_time=m.start_time,
-        duration_display=duration_label(m.duration_minutes),
+        date_label=date_label(m.meeting_date),
+        duration_label=duration_label(m.duration_minutes),
         meeting_date=m.meeting_date,
+        start_time=m.start_time,
         duration_minutes=m.duration_minutes,
+        scheduled_at=m.scheduled_at,
         status=m.status,
-        existing_members_count=len(links),
-        new_members_count=0,
-        participant_avatar_urls=avatars[:3],
-        existing_preview_avatar_urls=existing_preview,
-        participant_member_ids=[ln.user_id for ln in links],
-        participant_roster=roster,
+        conducted_at=m.conducted_at,
+        final_elapsed_seconds=m.final_elapsed_seconds,
+        has_recording=m.recording is not None,
+        contact_count=len(contacts),
+        members=[MemberListItem.model_validate(c) for c in contacts],
     )
-
-
-def load_meeting_with_links(db: Session, meeting_id: str) -> Meeting | None:
-    stmt = (
-        select(Meeting)
-        .where(Meeting.id == meeting_id)
-        .options(selectinload(Meeting.participants).selectinload(MeetingParticipant.user))
-    )
-    return db.execute(stmt).unique().scalar_one_or_none()

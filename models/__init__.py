@@ -1,19 +1,19 @@
-"""ORM models — import side effects register tables with Base.metadata."""
+"""ORM models — importing this package registers every table with Base.metadata."""
 
+from models.contact import Contact
 from models.meeting import Meeting
-from models.meeting_device_recording import MeetingDeviceRecording
-from models.meeting_live_session import MeetingLiveSession
-from models.meeting_participant import MeetingParticipant
+from models.meeting_contact import meeting_contacts
+from models.meeting_recording import MeetingRecording
 from models.meeting_transcript import MeetingTranscript
 from models.meeting_transcript_segment import MeetingTranscriptSegment
 from models.user import User
 
 __all__ = [
     "User",
+    "Contact",
     "Meeting",
-    "MeetingParticipant",
-    "MeetingDeviceRecording",
-    "MeetingLiveSession",
+    "meeting_contacts",
+    "MeetingRecording",
     "MeetingTranscript",
     "MeetingTranscriptSegment",
 ]

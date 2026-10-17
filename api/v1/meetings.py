@@ -9,6 +9,7 @@ from api.deps import get_current_user, pagination
 from db.session import get_db
 from models.contact import Contact
 from models.meeting import Meeting
+from models.meeting_transcript import MeetingTranscript
 from models.user import User
 from schemas.meeting import (
     MeetingCompleteRequest,
@@ -81,6 +82,7 @@ def list_meetings(
     page: Annotated[tuple[int, int], Depends(pagination)],
     scope: Annotated[str, Query()] = "all",
     q: Annotated[str | None, Query(max_length=200)] = None,
+    search_content: Annotated[bool, Query()] = False,
     participant: Annotated[str | None, Query(max_length=200)] = None,
     date_from: Annotated[str | None, Query()] = None,
     date_to: Annotated[str | None, Query()] = None,
@@ -92,7 +94,19 @@ def list_meetings(
     if scope in _SCOPE_STATUS:
         stmt = stmt.where(Meeting.status == _SCOPE_STATUS[scope])
     if q and q.strip():
-        stmt = stmt.where(Meeting.title.ilike(f"%{q.strip()}%"))
+        term = f"%{q.strip()}%"
+        if search_content:
+            # Also match the transcript body and the generated minutes (summary,
+            # decisions, action items are stored together in minutes_json).
+            stmt = stmt.where(
+                Meeting.title.ilike(term)
+                | Meeting.transcript.has(
+                    MeetingTranscript.merged_text.ilike(term)
+                    | MeetingTranscript.minutes_json.ilike(term)
+                )
+            )
+        else:
+            stmt = stmt.where(Meeting.title.ilike(term))
     # Filter by a participant's name (matches any contact on the meeting).
     if participant and participant.strip():
         stmt = stmt.where(Meeting.contacts.any(Contact.name.ilike(f"%{participant.strip()}%")))

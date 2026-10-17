@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -28,6 +28,16 @@ from utils.ids import new_id
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
 _SCOPE_STATUS = {"upcoming": "scheduled", "completed": "completed"}
+
+
+def _parse_date_query(raw: str | None) -> date | None:
+    """Parse a 'YYYY-MM-DD' query value to a date; return None if missing/invalid."""
+    if not raw or not raw.strip():
+        return None
+    try:
+        return datetime.strptime(raw.strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 def _normalize_time(raw: str) -> str:
@@ -71,6 +81,9 @@ def list_meetings(
     page: Annotated[tuple[int, int], Depends(pagination)],
     scope: Annotated[str, Query()] = "all",
     q: Annotated[str | None, Query(max_length=200)] = None,
+    participant: Annotated[str | None, Query(max_length=200)] = None,
+    date_from: Annotated[str | None, Query()] = None,
+    date_to: Annotated[str | None, Query()] = None,
 ) -> list[MeetingListItemOut]:
     if scope not in ("upcoming", "completed", "all"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid scope")
@@ -80,6 +93,16 @@ def list_meetings(
         stmt = stmt.where(Meeting.status == _SCOPE_STATUS[scope])
     if q and q.strip():
         stmt = stmt.where(Meeting.title.ilike(f"%{q.strip()}%"))
+    # Filter by a participant's name (matches any contact on the meeting).
+    if participant and participant.strip():
+        stmt = stmt.where(Meeting.contacts.any(Contact.name.ilike(f"%{participant.strip()}%")))
+    # Date range on the meeting's calendar date (YYYY-MM-DD). Invalid dates are ignored.
+    df = _parse_date_query(date_from)
+    if df is not None:
+        stmt = stmt.where(Meeting.meeting_date >= df)
+    dt = _parse_date_query(date_to)
+    if dt is not None:
+        stmt = stmt.where(Meeting.meeting_date <= dt)
     # Upcoming reads soonest-first; history reads most-recent-first.
     if scope == "upcoming":
         stmt = stmt.order_by(Meeting.scheduled_at.asc())

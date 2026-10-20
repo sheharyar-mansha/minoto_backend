@@ -36,3 +36,32 @@ class MemberOut(MemberListItem):
     voice_recorded_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+    # Login-account status (never the password itself — that comes from reveal).
+    has_account: bool = False
+    must_set_password: bool = False
+    has_set_own_password: bool = False
+
+
+class MemberCreatedOut(MemberOut):
+    """Returned once when a member is created — includes the one-time temp password."""
+
+    temp_password: str | None = None
+
+
+class RevealPasswordRequest(BaseModel):
+    owner_password: str = Field(min_length=1, max_length=128)
+
+
+class ResetPasswordRequest(BaseModel):
+    owner_password: str = Field(min_length=1, max_length=128)
+
+
+class MemberPasswordOut(BaseModel):
+    """Result of reveal/reset. `status`: 'pending' (temp usable) | 'set' (member
+    chose their own) | 'none' (no account)."""
+
+    member_id: str
+    email: str
+    status: str
+    temp_password: str | None = None

@@ -15,9 +15,20 @@ from db.session import get_db
 from models.contact import Contact
 from models.user import User
 from pipeline.enroll import enroll_contact_voice
-from schemas.member import MemberCreate, MemberListItem, MemberOut, MemberUpdate
+from schemas.member import (
+    MemberCreate,
+    MemberCreatedOut,
+    MemberListItem,
+    MemberOut,
+    MemberPasswordOut,
+    MemberUpdate,
+    ResetPasswordRequest,
+    RevealPasswordRequest,
+)
+from services.security import verify_password
 from services.storage import remove_file_if_exists, save_streaming_upload
 from utils.ids import new_id
+from utils.passwords import generate_temp_password
 
 router = APIRouter(prefix="/members", tags=["members"])
 
@@ -55,20 +66,87 @@ def list_members(
     return [MemberListItem.model_validate(r) for r in rows]
 
 
-@router.post("", response_model=MemberOut, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=MemberCreatedOut, status_code=status.HTTP_201_CREATED)
 def create_member(
     body: MemberCreate,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
-) -> MemberOut:
+) -> MemberCreatedOut:
     email = str(body.email).strip().lower()
     if _email_in_use(db, email):
         raise HTTPException(status.HTTP_409_CONFLICT, detail="A member with this email already exists")
-    contact = Contact(id=new_id(), name=body.name.strip(), email=email)
+    # Provision a read-only login account with a one-time temp password. Harmless
+    # when the app's user-accounts flag is off (nothing surfaces it).
+    temp = generate_temp_password()
+    contact = Contact(
+        id=new_id(),
+        name=body.name.strip(),
+        email=email,
+        temp_password=temp,
+        must_set_password=True,
+    )
     db.add(contact)
     db.commit()
     db.refresh(contact)
-    return MemberOut.model_validate(contact)
+    out = MemberCreatedOut.model_validate(contact)
+    out.temp_password = temp  # shown once to the owner
+    return out
+
+
+def _reauth_owner(user: User, password: str) -> None:
+    """Re-verify the owner's own password before revealing/resetting a secret."""
+    if not verify_password(password, user.hashed_password):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Incorrect admin password")
+
+
+def _password_status(contact: Contact) -> str:
+    if contact.must_set_password and contact.temp_password:
+        return "pending"
+    if contact.has_set_own_password:
+        return "set"
+    return "none"
+
+
+@router.post("/{member_id}/reveal-password", response_model=MemberPasswordOut)
+def reveal_member_password(
+    member_id: str,
+    body: RevealPasswordRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> MemberPasswordOut:
+    """Owner views a member's one-time temp password — gated by the owner's password."""
+    contact = _get_contact_or_404(db, member_id)
+    _reauth_owner(user, body.owner_password)
+    status_ = _password_status(contact)
+    return MemberPasswordOut(
+        member_id=contact.id,
+        email=contact.email,
+        status=status_,
+        temp_password=contact.temp_password if status_ == "pending" else None,
+    )
+
+
+@router.post("/{member_id}/reset-password", response_model=MemberPasswordOut)
+def reset_member_password(
+    member_id: str,
+    body: ResetPasswordRequest,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> MemberPasswordOut:
+    """Regenerate a member's one-time temp password — gated by the owner's password."""
+    contact = _get_contact_or_404(db, member_id)
+    _reauth_owner(user, body.owner_password)
+    temp = generate_temp_password()
+    contact.temp_password = temp
+    contact.hashed_password = None
+    contact.must_set_password = True
+    contact.password_set_at = None
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+    return MemberPasswordOut(
+        member_id=contact.id, email=contact.email, status="pending", temp_password=temp
+    )
 
 
 @router.get("/{member_id}", response_model=MemberOut)

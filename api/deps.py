@@ -5,9 +5,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from db.session import get_db
+from models.contact import Contact
 from models.meeting import Meeting
 from models.user import User
-from services.security import decode_token_subject
+from services.security import decode_token_claims, decode_token_subject
 
 security = HTTPBearer(auto_error=False)
 
@@ -40,6 +41,30 @@ def get_current_user(
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
+
+
+def get_current_member(
+    db: Annotated[Session, Depends(get_db)],
+    creds: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+) -> Contact:
+    """Resolve a member (Contact) login token. Rejects owner tokens."""
+    if creds is None or creds.scheme.lower() != "bearer":
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    claims = decode_token_claims(creds.credentials)
+    if claims is None or claims.get("typ") != "member" or not claims.get("sub"):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    member = db.get(Contact, str(claims["sub"]))
+    if member is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Account not found")
+    return member
 
 
 def get_meeting_or_404(

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -9,7 +9,6 @@ from api.deps import get_current_user, pagination
 from db.session import get_db
 from models.contact import Contact
 from models.meeting import Meeting
-from models.meeting_transcript import MeetingTranscript
 from models.user import User
 from schemas.meeting import (
     MeetingCompleteRequest,
@@ -23,22 +22,11 @@ from schemas.meeting import (
 )
 from schemas.member import MemberListItem
 from services.meeting_present import load_meeting_with_contacts, meeting_detail, meeting_list_item
+from services.meeting_query import VALID_SCOPES, apply_meeting_filters, order_meetings
 from services.transcript_jobs import run_generate_meeting_transcript_task
 from utils.ids import new_id
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
-
-_SCOPE_STATUS = {"upcoming": "scheduled", "completed": "completed"}
-
-
-def _parse_date_query(raw: str | None) -> date | None:
-    """Parse a 'YYYY-MM-DD' query value to a date; return None if missing/invalid."""
-    if not raw or not raw.strip():
-        return None
-    try:
-        return datetime.strptime(raw.strip(), "%Y-%m-%d").date()
-    except ValueError:
-        return None
 
 
 def _normalize_time(raw: str) -> str:
@@ -87,41 +75,19 @@ def list_meetings(
     date_from: Annotated[str | None, Query()] = None,
     date_to: Annotated[str | None, Query()] = None,
 ) -> list[MeetingListItemOut]:
-    if scope not in ("upcoming", "completed", "all"):
+    if scope not in VALID_SCOPES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid scope")
     skip, limit = page
-    stmt = select(Meeting)
-    if scope in _SCOPE_STATUS:
-        stmt = stmt.where(Meeting.status == _SCOPE_STATUS[scope])
-    if q and q.strip():
-        term = f"%{q.strip()}%"
-        if search_content:
-            # Also match the transcript body and the generated minutes (summary,
-            # decisions, action items are stored together in minutes_json).
-            stmt = stmt.where(
-                Meeting.title.ilike(term)
-                | Meeting.transcript.has(
-                    MeetingTranscript.merged_text.ilike(term)
-                    | MeetingTranscript.minutes_json.ilike(term)
-                )
-            )
-        else:
-            stmt = stmt.where(Meeting.title.ilike(term))
-    # Filter by a participant's name (matches any contact on the meeting).
-    if participant and participant.strip():
-        stmt = stmt.where(Meeting.contacts.any(Contact.name.ilike(f"%{participant.strip()}%")))
-    # Date range on the meeting's calendar date (YYYY-MM-DD). Invalid dates are ignored.
-    df = _parse_date_query(date_from)
-    if df is not None:
-        stmt = stmt.where(Meeting.meeting_date >= df)
-    dt = _parse_date_query(date_to)
-    if dt is not None:
-        stmt = stmt.where(Meeting.meeting_date <= dt)
-    # Upcoming reads soonest-first; history reads most-recent-first.
-    if scope == "upcoming":
-        stmt = stmt.order_by(Meeting.scheduled_at.asc())
-    else:
-        stmt = stmt.order_by(Meeting.scheduled_at.desc())
+    stmt = apply_meeting_filters(
+        select(Meeting),
+        scope=scope,
+        q=q,
+        search_content=search_content,
+        participant=participant,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    stmt = order_meetings(stmt, scope)
     rows = db.scalars(stmt.offset(skip).limit(limit)).all()
     return [meeting_list_item(m) for m in rows]
 

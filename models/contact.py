@@ -36,6 +36,22 @@ class Contact(Base):
     # How spoken_name was derived: 'intro_regex' | 'intro_gemini' | None (failed).
     spoken_name_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
+    # Optional read-only login account (feature-flagged in the app). The member's
+    # chosen password is only ever stored hashed; `temp_password` is a one-time
+    # random the owner can reveal, cleared the moment the member sets their own.
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    temp_password: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    must_set_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    password_set_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def has_account(self) -> bool:
+        return self.hashed_password is not None or self.temp_password is not None
+
+    @property
+    def has_set_own_password(self) -> bool:
+        return self.hashed_password is not None and not self.must_set_password
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

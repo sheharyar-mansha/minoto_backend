@@ -50,6 +50,18 @@ def _email_in_use(db: Session, email: str, *, exclude_id: str | None = None) -> 
     return db.scalars(stmt).first() is not None
 
 
+def resolve_manual_spoken_name(raw: str) -> tuple[str | None, str | None]:
+    """Normalize an owner-entered spoken name into (spoken_name, spoken_name_source).
+
+    A non-empty value is kept (trimmed) and marked "manual"; an empty/whitespace
+    value clears the spoken name so the transcript falls back to the roster name.
+    """
+    cleaned = raw.strip()
+    if cleaned:
+        return cleaned, "manual"
+    return None, None
+
+
 @router.get("", response_model=list[MemberListItem])
 def list_members(
     user: Annotated[User, Depends(get_current_user)],
@@ -173,6 +185,11 @@ def update_member(
         if _email_in_use(db, email, exclude_id=contact.id):
             raise HTTPException(status.HTTP_409_CONFLICT, detail="A member with this email already exists")
         contact.email = email
+    if body.spoken_name is not None:
+        # Owner confirmed/corrected the name heard in the enrollment clip.
+        contact.spoken_name, contact.spoken_name_source = resolve_manual_spoken_name(
+            body.spoken_name
+        )
     db.add(contact)
     db.commit()
     db.refresh(contact)

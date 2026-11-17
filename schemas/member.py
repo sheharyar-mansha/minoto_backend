@@ -13,6 +13,10 @@ class MemberCreate(BaseModel):
 class MemberUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     email: EmailStr | None = None
+    # Owner-confirmed transcript label from the post-enrollment "name heard" check.
+    # Sent as a non-null value overrides the auto-extracted spoken name (and marks
+    # the source "manual"); "" clears it so the roster name is used instead.
+    spoken_name: str | None = Field(default=None, max_length=255)
 
 
 class MemberListItem(BaseModel):

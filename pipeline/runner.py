@@ -152,6 +152,19 @@ def _run_pipeline(db: Session, meeting: Meeting, tx: MeetingTranscript) -> None:
     if audio.size == 0:
         raise RuntimeError("Recording decoded to empty audio.")
 
+    # Loudness-normalize once, before diarization + ASR, so quiet recordings are
+    # amplified to a consistent level without clipping. Toggle via AUDIO_NORMALIZE.
+    if settings.AUDIO_NORMALIZE:
+        from pipeline.audio_io import normalize_loudness
+
+        audio, gain = normalize_loudness(
+            audio,
+            target_rms=settings.AUDIO_TARGET_RMS,
+            max_gain=settings.AUDIO_MAX_GAIN,
+        )
+        if gain != 1.0:
+            log.info("Loudness-normalized meeting=%s (gain x%.2f)", meeting.id, gain)
+
     # Enrolled voiceprints (512-dim) for identification.
     contact_vectors = _load_contact_vectors(contacts)
 

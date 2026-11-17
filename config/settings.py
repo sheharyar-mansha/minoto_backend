@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     TRANSCRIBE_LANGUAGE: str = "en"  # "" / "auto" to auto-detect
     TRANSCRIBE_BEAM_SIZE: int = 5
 
+    # Audio pre-processing (applied once, right after decode, before diarization
+    # and ASR). Loudness normalization brings quiet recordings up to a consistent
+    # level WITHOUT clipping (a peak guard caps the gain), which mainly helps
+    # under-recorded meetings and the level-sensitive diarization/embedding steps.
+    AUDIO_NORMALIZE: bool = True  # set false to feed the raw decoded audio through
+    AUDIO_TARGET_RMS: float = 0.1  # ~ -20 dBFS; target loudness to amplify quiet audio toward
+    AUDIO_MAX_GAIN: float = 8.0  # cap amplification (~ +18 dB) so near-silence/noise isn't blown up
+
     # Speaker identification (match diarized clusters to enrolled contacts).
     PYANNOTE_DIARIZATION_MODEL: str = "pyannote/speaker-diarization-3.1"
     PYANNOTE_EMBEDDING_MODEL: str = "pyannote/embedding"  # 512-dim, used for BOTH enrollment and match
